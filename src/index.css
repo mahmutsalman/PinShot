@@ -427,6 +427,76 @@ kbd {
   accent-color: var(--accent);
 }
 
+/* Single-mode viewer: fixed rectangle, header moves it, body pans, ⌘+scroll
+   zooms. Differently-sized images all show framed inside the same window. */
+.pin.viewer {
+  display: flex;
+  flex-direction: column;
+  background: rgba(16, 18, 24, 0.96);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.viewer-head {
+  flex: 0 0 auto;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--panel-border);
+  cursor: grab;
+}
+.viewer-head:active {
+  cursor: grabbing;
+}
+.vh-btn {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 6px;
+}
+.vh-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  min-width: 40px;
+  text-align: center;
+}
+.vh-spacer {
+  flex: 1;
+}
+.viewer-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+}
+.viewer-body:active {
+  cursor: grabbing;
+}
+.viewer-body > img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  will-change: transform;
+  -webkit-user-drag: none;
+  user-select: none;
+  border-radius: 4px;
+}
+/* In the viewer the toolbar sits just below the header, not over the image top. */
+.viewer-tools {
+  top: 38px;
+}
+
 /* Collapsed thumbnail */
 .pin.collapsed {
   border: 1px solid var(--panel-border);

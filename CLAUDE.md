@@ -71,7 +71,14 @@ on it.
   control panel in place; ⌥⌘P and Dock both reappear it where you left it (panels
   retain their frame — we no longer force it back to the top-right corner).
 - **Show all** = every image visible at once at its saved position. **Single** =
-  one image (the carousel) with ‹ › nav on the viewer + control panel to cycle.
+  one **fixed viewer rectangle** (a single window, ~60% of the monitor, centered
+  first time, position persisted via `single_pos`, size = `Deck.single_size`
+  set by `ensure_viewer`; **Rust owns the window size in single mode**, frontend
+  skips its resize). Header bar = drag to move + ‹ N/M › nav + ⚙ + ✕; body =
+  the image shown `object-fit: contain`, **drag to pan**, **⌘+scroll to zoom**
+  (native non-passive listener), reset-to-fit on every image switch (transient
+  `zoom`/`pan` state in `Pin`, not the persisted `scale`). Keeps differently-
+  sized images framed in one stable spot.
 - **Arrow-key carousel nav**: in Single mode with >1 pin, ← / → cycle the deck
   (`deckStep(∓1)`). Implemented as a window-local `keydown` listener in both
   `Pin` and `Control` — NOT a global shortcut — so arrows only fire while a

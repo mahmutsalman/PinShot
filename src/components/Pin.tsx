@@ -44,10 +44,24 @@ export default function Pin() {
   const [opacity, setOpacity] = useState(1);
   const [collapsed, setCollapsed] = useState(false);
   const [clickThrough, setClickThrough] = useState(false);
-  // Toolbar is hidden by default (it covered the image) — revealed by the
-  // top-right ⚙ toggle instead of on hover.
+  // Toolbar is hidden by default (it covered the image) — revealed by the ⚙.
   const [showTools, setShowTools] = useState(false);
+  // Single-mode viewer: transient zoom + pan of the image WITHIN the fixed
+  // viewer rectangle (reset to fit whenever the shown image changes).
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const idRef = useRef<number | null>(null);
+  const panning = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Mirror zoom/pan into refs so the native wheel listener reads fresh values.
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
 
   // Receive this window's view (render / cycle / replace) and on (re)mount.
   useEffect(() => {
@@ -59,19 +73,22 @@ export default function Pin() {
   }, []);
 
   // Seed local state whenever the shown image changes (cycle / replace / mode).
+  // Resetting zoom/pan here is the "reset to fit on switch" behavior.
   useEffect(() => {
     if (!view) return;
     setScale(view.scale);
     setOpacity(view.opacity);
     setCollapsed(view.collapsed);
     setClickThrough(view.clickThrough);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
     idRef.current = view.id;
   }, [view?.id, view?.dataUrl]);
 
-  // Keep the native window sized to the current view. Collapse pins top-left;
-  // zoom grows from center. (Position itself is owned by Rust.)
+  // Keep the native window sized to the current image. NOT in single mode — the
+  // viewer rectangle's size is owned by Rust there. Collapse → thumbnail.
   useEffect(() => {
-    if (!view) return;
+    if (!view || view.mode === "single") return;
     if (collapsed) {
       const ar = view.fitW / view.fitH;
       const [w, h] =
@@ -82,10 +99,7 @@ export default function Pin() {
     }
   }, [view, collapsed, scale]);
 
-  // ← / → cycle the carousel while THIS pin window is focused. PinShot's panels
-  // never grab focus globally (non-activating), so this only fires after you
-  // click the pin — it never steals arrow keys from other apps. Single mode +
-  // more than one image only.
+  // ← / → cycle the carousel while THIS pin window is focused (single mode, >1).
   useEffect(() => {
     if (view?.mode !== "single" || (view?.total ?? 0) <= 1) return;
     const onKey = (e: KeyboardEvent) => {
@@ -139,11 +153,78 @@ export default function Pin() {
     if (view) void setImageClickThrough(view.id, next);
   }
 
+  // --- single-mode viewer interactions ---------------------------------------
+
+  /** Drag the header to MOVE the viewer window. */
+  function onHeadDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    void focusPin(label);
+    if ((e.target as HTMLElement).closest("button, input")) return;
+    void win.startDragging();
+  }
+
+  /** Drag the body to PAN the image inside the viewer. */
+  function onBodyDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    void focusPin(label);
+    if ((e.target as HTMLElement).closest("button, input")) return;
+    panning.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+    const move = (ev: MouseEvent) => {
+      const p = panning.current;
+      if (!p) return;
+      setPan({ x: p.px + (ev.clientX - p.sx), y: p.py + (ev.clientY - p.sy) });
+    };
+    const up = () => {
+      panning.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  // ⌘ + scroll zooms toward the cursor; plain scroll is ignored. Native (not
+  // React) listener so it's non-passive — preventDefault stops WKWebView from
+  // page-zooming, and it reads zoom/pan from refs to stay current.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      if (!e.metaKey) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left - rect.width / 2;
+      const cy = e.clientY - rect.top - rect.height / 2;
+      const z = zoomRef.current;
+      const nz = clamp(z * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP), ZOOM_MIN, ZOOM_MAX);
+      const k = nz / z;
+      const p = panRef.current;
+      setPan({ x: cx - (cx - p.x) * k, y: cy - (cy - p.y) * k });
+      setZoom(nz);
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [view?.mode]);
+
+  /** Zoom from center (toolbar −/+ buttons). */
+  function zoomBy(factor: number) {
+    const nz = clamp(zoom * factor, ZOOM_MIN, ZOOM_MAX);
+    const k = nz / zoom;
+    setPan((p) => ({ x: p.x * k, y: p.y * k }));
+    setZoom(nz);
+  }
+
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+
   if (!view) return <div className="pin empty" />;
 
   const single = view.mode === "single";
 
-  if (collapsed) {
+  // Collapsed thumbnail (all-mode only).
+  if (collapsed && !single) {
     return (
       <div className="pin collapsed" onMouseDown={onDragStart} title="Click ⤢ to expand · drag to move">
         <img src={view.dataUrl} alt="pinned" style={{ opacity }} draggable={false} />
@@ -159,6 +240,99 @@ export default function Pin() {
     );
   }
 
+  // Single mode: one fixed viewer rectangle. Header moves it, body pans,
+  // ⌘+scroll zooms. Differently-sized images stay framed in the same spot.
+  if (single) {
+    return (
+      <div className="pin viewer">
+        <div className="viewer-head" onMouseDown={onHeadDown}>
+          {view.total > 1 && (
+            <button className="vh-btn" title="Previous (←)" onClick={() => void deckStep(-1)}>
+              ‹
+            </button>
+          )}
+          <span className="vh-count">
+            {view.index} / {view.total}
+          </span>
+          {view.total > 1 && (
+            <button className="vh-btn" title="Next (→)" onClick={() => void deckStep(1)}>
+              ›
+            </button>
+          )}
+          <span className="vh-spacer" />
+          <button className="ic" title="Reset view (fit)" onClick={resetView}>
+            ⤢
+          </button>
+          <button
+            className={`ic${showTools ? " on" : ""}`}
+            title={showTools ? "Hide controls" : "Show controls"}
+            onClick={() => setShowTools((v) => !v)}
+          >
+            ⚙
+          </button>
+          <button className="ic close" title="Close pin" onClick={() => void closeImage(view.id)}>
+            ✕
+          </button>
+        </div>
+
+        <div
+          className="viewer-body"
+          ref={bodyRef}
+          onMouseDown={onBodyDown}
+          title="Drag to pan · ⌘+scroll to zoom"
+        >
+          <img
+            src={view.dataUrl}
+            alt="pinned"
+            draggable={false}
+            style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, opacity }}
+          />
+        </div>
+
+        {showTools && (
+          <div className="toolbar open viewer-tools">
+            <button className="ic" title="Zoom out (⌘+scroll)" onClick={() => zoomBy(1 / ZOOM_STEP)}>
+              −
+            </button>
+            <span className="pct" title="Reset to fit" onClick={resetView}>
+              {Math.round(zoom * 100)}%
+            </span>
+            <button className="ic" title="Zoom in (⌘+scroll)" onClick={() => zoomBy(ZOOM_STEP)}>
+              +
+            </button>
+            <span className="sep" />
+            <input
+              className="opacity"
+              type="range"
+              min={OPACITY_MIN}
+              max={1}
+              step={0.05}
+              value={opacity}
+              title="Opacity"
+              onChange={(e) => changeOpacity(parseFloat(e.target.value))}
+            />
+            <span className="sep" />
+            <button
+              className="ic"
+              title="Replace with the current clipboard image"
+              onClick={() => void replaceImage(view.id)}
+            >
+              ⟳
+            </button>
+            <button
+              className={`ic${clickThrough ? " on" : ""}`}
+              title="Click-through (mouse passes through). Press ⌥⌘C to turn off."
+              onClick={toggleClickThrough}
+            >
+              👆
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // All mode: each image is its own window, sized to the image.
   return (
     <div className="pin" onMouseDown={onDragStart} onWheel={onWheel}>
       <img src={view.dataUrl} alt="pinned" style={{ opacity }} draggable={false} />
@@ -172,19 +346,7 @@ export default function Pin() {
         ⚙
       </button>
 
-      {single && view.total > 1 && (
-        <>
-          <button className="nav prev" title="Previous (← or click)" onClick={() => void deckStep(-1)}>
-            ‹
-          </button>
-          <button className="nav next" title="Next (→ or click)" onClick={() => void deckStep(1)}>
-            ›
-          </button>
-        </>
-      )}
-
       <div className={`toolbar${showTools ? " open" : ""}`}>
-        {single && <span className="count">{view.index} / {view.total}</span>}
         <button className="ic" title="Collapse" onClick={toggleCollapsed}>
           ⤡
         </button>

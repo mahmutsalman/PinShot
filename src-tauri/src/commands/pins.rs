@@ -65,6 +65,10 @@ struct Deck {
     /// In single mode the one viewer window stays put across cycles — its
     /// position is tracked here, separate from any image's all-mode position.
     single_pos: Option<(i32, i32)>,
+    /// Single-mode viewer rectangle size (logical). Fixed across navigation so
+    /// differently-sized images all show inside the same stable frame. Computed
+    /// (~60% of the monitor) the first time single mode is shown.
+    single_size: Option<(f64, f64)>,
     /// window label -> image id currently shown there (rebuilt every render).
     assign: HashMap<String, u64>,
     /// Fallback id source if a DB insert ever fails (normally image ids ARE the
@@ -85,6 +89,7 @@ impl Default for Deck {
             mode: Mode::All,
             current: 0,
             single_pos: None,
+            single_size: None,
             assign: HashMap::new(),
             next_id: 1,
             active_session: 0,
@@ -674,6 +679,31 @@ fn focus_panel(app: &AppHandle, label: &str) {
     }
 }
 
+/// Ensure the single-mode viewer has a size (~60% of the cursor monitor) and a
+/// centered position the first time it's shown. Position then persists (drag the
+/// header to move it); size stays the computed default.
+fn ensure_viewer(app: &AppHandle, deck: &mut Deck) {
+    if deck.single_size.is_some() && deck.single_pos.is_some() {
+        return;
+    }
+    if let Some(m) = cursor_monitor(app) {
+        let sf = m.scale_factor();
+        let mon = m.size().to_logical::<f64>(sf);
+        let w = (mon.width * 0.6).round();
+        let h = (mon.height * 0.6).round();
+        deck.single_size.get_or_insert((w, h));
+        if deck.single_pos.is_none() {
+            let mp = m.position();
+            let px = mp.x + (((mon.width - w) / 2.0) * sf).round() as i32;
+            let py = mp.y + (((mon.height - h) / 2.0) * sf).round() as i32;
+            deck.single_pos = Some((px, py));
+        }
+    } else {
+        deck.single_size.get_or_insert((800.0, 600.0));
+        deck.single_pos.get_or_insert((120, 120));
+    }
+}
+
 // --- the render: deck -> windows --------------------------------------------
 
 /// Reconcile the windows with the deck + mode. Each visible image gets a window
@@ -702,18 +732,20 @@ fn render(app: &AppHandle, deck: &mut Deck) {
         }
     };
 
+    // Single mode shows everything inside one fixed, centered viewer rectangle.
+    if mode == Mode::Single && total > 0 {
+        ensure_viewer(app, deck);
+    }
+
     deck.assign.clear();
 
     for (order, (label, idx)) in visible.iter().enumerate() {
         let label = *label;
         let idx = *idx;
 
-        // In single mode the viewer keeps one stable position (seeded from the
-        // first image's spot, or a default) so cycling swaps in place.
+        // In single mode the viewer keeps one stable position so cycling swaps
+        // in place; in all mode each image remembers its own spot.
         let pos = if mode == Mode::Single {
-            if deck.single_pos.is_none() {
-                deck.single_pos = Some(deck.images[idx].pos.unwrap_or_else(|| default_pos(app, 0)));
-            }
             deck.single_pos.unwrap()
         } else {
             if deck.images[idx].pos.is_none() {
@@ -725,6 +757,13 @@ fn render(app: &AppHandle, deck: &mut Deck) {
         let id = deck.images[idx].id;
 
         if let Some(window) = app.get_webview_window(label) {
+            // Single mode: Rust owns the window SIZE too (the fixed viewer rect);
+            // all mode: the frontend sizes it to the image (fit × scale).
+            if mode == Mode::Single {
+                if let Some((w, h)) = deck.single_size {
+                    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+                }
+            }
             let _ = window.set_position(tauri::PhysicalPosition::new(pos.0, pos.1));
             let _ = window.set_ignore_cursor_events(ct);
             show(app, &window, label);
