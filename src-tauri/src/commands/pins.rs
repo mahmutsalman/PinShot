@@ -640,17 +640,31 @@ fn is_visible(app: &AppHandle, window: &WebviewWindow, label: &str) -> bool {
     window.is_visible().unwrap_or(false)
 }
 
-/// Make a panel the *key* window (so its webview receives the keyboard) WITHOUT
-/// activating the app. The AppKit calls (`makeKeyWindow`, `makeFirstResponder`)
-/// must run on the main thread — dispatching here is what makes arrow-key focus
-/// robust instead of "works once then stops". On non-macOS, fall back to the
-/// ordinary window focus. Used on pin click and re-asserted after each cycle.
+/// Make a panel the *key* window AND put its **WKWebView** (not the container
+/// view) at the front of the responder chain, so the DOM receives the keyboard —
+/// text inputs accept typing and ← / → `keydown` fires. Targeting the container
+/// view instead (what `RawNSPanel::show()` does) silently steals focus away from
+/// the webview, which is why typing/arrows "didn't work". All AppKit calls run on
+/// the main thread. Without activating the app. On non-macOS, plain window focus.
+#[allow(deprecated)] // cocoa `id` alias; same API the nspanel crate itself uses
 fn focus_panel(app: &AppHandle, label: &str) {
     #[cfg(target_os = "macos")]
     if let Some(p) = panel(app, label) {
         let _ = app.run_on_main_thread(move || {
-            let content = p.content_view();
-            p.make_first_responder(Some(content));
+            use tauri_nspanel::cocoa::base::id;
+            use tauri_nspanel::objc::{msg_send, sel, sel_impl};
+            // The WKWebView is a subview of the panel's content view.
+            let content: id = p.content_view();
+            let webview: id = unsafe {
+                let subviews: id = msg_send![content, subviews];
+                let count: usize = msg_send![subviews, count];
+                if count > 0 {
+                    msg_send![subviews, objectAtIndex: 0usize]
+                } else {
+                    content
+                }
+            };
+            p.make_first_responder(Some(webview));
             p.make_key_window();
         });
         return;
