@@ -93,6 +93,8 @@ on it.
   `Pin` and `Control` — NOT a global shortcut — so arrows only fire while a
   PinShot window is focused and never steal arrow keys from other apps.
   Click-through pins can't be focused, so arrows won't reach them — expected.
+  **ESC** (while a pin/viewer or the control panel is focused) hides all pins
+  (`hide_pins`) — a quick dismiss while navigating.
   - **Focus is grabbed deterministically, not via AppKit heuristics** (those
     were flaky — "works once then stops", or arrows leaking to the app you were
     in). Three pieces, all required: (1) `convert_to_panel` sets

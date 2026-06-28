@@ -153,21 +153,27 @@ export default function Control() {
   const showAll = deck.mode === "all";
   const single = deck.mode === "single";
 
-  // ← / → cycle pins while the control panel is focused (Single mode, >1 pin).
+  // ← / → cycle pins (Single mode, >1) and ESC hides pins — while the control
+  // panel is focused.
   useEffect(() => {
-    if (pane !== "main" || !single || deck.count <= 1) return;
+    const canCycle = pane === "main" && single && deck.count > 1;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") {
+      if (e.key === "Escape") {
+        if (deck.count > 0 && deck.revealed) {
+          e.preventDefault();
+          void hidePins();
+        }
+      } else if (canCycle && e.key === "ArrowLeft") {
         e.preventDefault();
         void deckStep(-1);
-      } else if (e.key === "ArrowRight") {
+      } else if (canCycle && e.key === "ArrowRight") {
         e.preventDefault();
         void deckStep(1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pane, single, deck.count]);
+  }, [pane, single, deck.count, deck.revealed]);
 
   function commitName() {
     editing.current = false;

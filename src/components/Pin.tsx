@@ -15,6 +15,7 @@ import {
   setImageClickThrough,
   deckStep,
   focusPin,
+  hidePins,
 } from "../lib/ipc";
 
 const win = getCurrentWebviewWindow();
@@ -100,14 +101,19 @@ export default function Pin() {
     }
   }, [view, collapsed, scale]);
 
-  // ← / → cycle the carousel while THIS pin window is focused (single mode, >1).
+  // ← / → cycle the carousel (single mode, >1) and ESC hides all pins — both
+  // only while THIS pin window is focused (never steals keys from other apps).
   useEffect(() => {
-    if (view?.mode !== "single" || (view?.total ?? 0) <= 1) return;
+    const single = view?.mode === "single";
+    const canCycle = single && (view?.total ?? 0) > 1;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        void hidePins();
+      } else if (canCycle && e.key === "ArrowLeft") {
         e.preventDefault();
         void deckStep(-1);
-      } else if (e.key === "ArrowRight") {
+      } else if (canCycle && e.key === "ArrowRight") {
         e.preventDefault();
         void deckStep(1);
       }
