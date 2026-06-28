@@ -25,7 +25,7 @@ import {
 } from "../lib/ipc";
 
 const CONTROL_WIDTH = 232;
-const MINI_WIDTH = 220;
+const MINI_WIDTH = 248;
 
 /** Drag the panel except from real controls. Any primary click first grabs
  *  keyboard focus so ← / → reach the panel. */
@@ -64,8 +64,9 @@ export default function Control() {
   const rootRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | null>(null);
 
-  // Mini bar shows recent-session chips only when there's more than one session.
-  const miniHasChips = mini && sessions.length > 1;
+  // Mini bar lists up to 3 recent sessions (vertically), only with >1 session.
+  const miniChipCount = mini ? Math.min(sessions.length, 3) : 0;
+  const miniHasChips = miniChipCount > 1;
 
   // Remember collapsed/expanded across restarts.
   useEffect(() => {
@@ -98,9 +99,10 @@ export default function Control() {
     if (!el) return;
     const fit = () => {
       if (mini) {
-        // Deterministic mini sizing — measuring a tiny window inside an
-        // overflow:hidden #root is unreliable and was clipping the bar.
-        void resizePin("control", MINI_WIDTH, miniHasChips ? 92 : 50, false);
+        // Deterministic mini sizing (measuring a tiny overflow:hidden window was
+        // unreliable). Action row ≈ 50px; each vertical session row ≈ 29px.
+        const h = miniHasChips ? 52 + miniChipCount * 29 : 50;
+        void resizePin("control", MINI_WIDTH, h, false);
         return;
       }
       const h = Math.max(el.scrollHeight, Math.ceil(el.getBoundingClientRect().height));
@@ -110,7 +112,7 @@ export default function Control() {
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mini, miniHasChips]);
+  }, [mini, miniHasChips, miniChipCount]);
 
   useEffect(() => {
     void getDeckSummary().then((s) => s && setDeck(s));

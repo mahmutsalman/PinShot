@@ -286,19 +286,22 @@ kbd {
 .btn-paste.mini-btn {
   flex: 1;
 }
-/* Recent-session quick-switch chips in the mini bar. */
+/* Recent-session quick-switch list in the mini bar — vertical, full-width rows
+   so long session names stay readable (truncated with an ellipsis, not spilling). */
 .mini-sessions {
   display: flex;
+  flex-direction: column;
   gap: 4px;
-  margin-top: 6px;
 }
 .mini-chip {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 6px;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  padding: 5px 9px;
   font-size: 11px;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
+  text-align: left;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--panel-border);
   border-radius: 7px;
   overflow: hidden;
