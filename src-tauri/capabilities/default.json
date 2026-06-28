@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the control panel + pin windows",
-  "windows": ["control", "pin-0", "pin-1", "pin-2", "pin-3", "pin-4", "pin-5"],
+  "windows": [
+    "control", "pin-0", "pin-1", "pin-2", "pin-3", "pin-4", "pin-5",
+    "pin-6", "pin-7", "pin-8", "pin-9", "pin-10", "pin-11"
+  ],
   "permissions": [
     "core:default",
     "core:event:default",

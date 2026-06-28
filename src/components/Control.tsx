@@ -42,6 +42,7 @@ const EMPTY: DeckSummary = {
   anyClickThrough: false,
   sessionId: 0,
   revealed: true,
+  poolSize: 12,
 };
 
 export default function Control() {
@@ -247,6 +248,7 @@ export default function Control() {
       ) : (
         <p className="count-line">
           {deck.count} pin{deck.count === 1 ? "" : "s"}
+          {deck.count > deck.poolSize && ` · showing ${deck.poolSize} (Single mode for all)`}
         </p>
       )}
 

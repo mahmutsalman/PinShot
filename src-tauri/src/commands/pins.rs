@@ -4,13 +4,21 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Monitor, State, WebviewWindow};
 
 pub const CONTROL_LABEL: &str = "control";
-pub const PIN_LABELS: [&str; 6] = ["pin-0", "pin-1", "pin-2", "pin-3", "pin-4", "pin-5"];
+/// Window pool for "show all" — every simultaneously-shown image needs its own
+/// window. Must stay in sync with `tauri.conf.json` + `capabilities/default.json`.
+pub const PIN_LABELS: [&str; 12] = [
+    "pin-0", "pin-1", "pin-2", "pin-3", "pin-4", "pin-5", "pin-6", "pin-7", "pin-8", "pin-9",
+    "pin-10", "pin-11",
+];
+/// Images a single session can hold. Single mode carousels through all of them
+/// in one window; "show all" can only display `pool_size()` (= PIN_LABELS.len())
+/// at once — the rest are reachable via Single mode.
+const MAX_IMAGES: usize = 50;
 const CONTROL_WIDTH: f64 = 232.0;
 // Largest fraction of the monitor a freshly-pinned image is allowed to take.
 const FIT_FRACTION: f64 = 0.85;
 
-/// Maximum images held at once — bounded by the pin-window pool (every image
-/// needs its own window when "show all" is on).
+/// How many images "show all" can display at once (one window each).
 fn pool_size() -> usize {
     PIN_LABELS.len()
 }
@@ -139,6 +147,9 @@ struct DeckSummary {
     session_id: i64,
     /// false right after launch (pins loaded but hidden) until revealed.
     revealed: bool,
+    /// How many images "show all" can display at once (window-pool size).
+    #[serde(rename = "poolSize")]
+    pool_size: usize,
 }
 
 /// One row for the session switcher in the control panel.
@@ -435,6 +446,17 @@ fn with_db<T>(app: &AppHandle, f: impl FnOnce(&Connection) -> T) -> T {
     let db = app.state::<Db>();
     let conn = db.0.lock().unwrap();
     f(&conn)
+}
+
+/// Show the deck if pins are currently revealed; otherwise just refresh the
+/// control-panel summary and leave everything hidden. This keeps a hidden state
+/// hidden when you paste / change mode / cycle (the image is still stored).
+fn render_or_summary(app: &AppHandle, deck: &mut Deck) {
+    if deck.revealed {
+        render(app, deck);
+    } else {
+        emit_summary(app, deck);
+    }
 }
 
 /// Emit the current session list to the control panel (after any session op).
@@ -799,6 +821,7 @@ fn emit_summary(app: &AppHandle, deck: &Deck) {
         any_click_through: deck.images.iter().any(|i| i.click_through),
         session_id: deck.active_session,
         revealed: deck.revealed,
+        pool_size: pool_size(),
     };
     let _ = app.emit("deck-changed", summary);
 }
@@ -823,10 +846,9 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
     let store = app.state::<PinStore>();
     let mut deck = store.0.lock().unwrap();
 
-    if deck.images.len() >= pool_size() {
+    if deck.images.len() >= MAX_IMAGES {
         return Err(format!(
-            "Holding the maximum of {} images — close one first.",
-            pool_size()
+            "This session is holding the maximum of {MAX_IMAGES} images — close one first."
         ));
     }
 
@@ -864,7 +886,9 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
     let (mode, current, single_pos) = (deck.mode, deck.current, deck.single_pos);
     with_db(app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
 
-    render(app, &mut deck);
+    // Respect the current visibility: pasting while hidden adds the image to the
+    // session but keeps everything hidden (the count updates; reveal to show).
+    render_or_summary(app, &mut deck);
     Ok(id)
 }
 
@@ -914,6 +938,7 @@ pub fn get_deck_summary(store: State<PinStore>) -> serde_json::Value {
         "anyClickThrough": deck.images.iter().any(|i| i.click_through),
         "sessionId": deck.active_session,
         "revealed": deck.revealed,
+        "poolSize": pool_size(),
     })
 }
 
@@ -1046,7 +1071,7 @@ pub fn set_mode(app: AppHandle, store: State<PinStore>, all: bool) {
     let (session_id, mode, current, single_pos) =
         (deck.active_session, deck.mode, deck.current, deck.single_pos);
     with_db(&app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
-    render(&app, &mut deck);
+    render_or_summary(&app, &mut deck);
 }
 
 #[tauri::command]
@@ -1060,16 +1085,17 @@ pub fn deck_step(app: AppHandle, store: State<PinStore>, delta: i32) {
     let next = ((cur + delta) % n as i32 + n as i32) % n as i32;
     deck.current = next as usize;
     let single = deck.mode == Mode::Single;
+    let revealed = deck.revealed;
     let (session_id, mode, current, single_pos) =
         (deck.active_session, deck.mode, deck.current, deck.single_pos);
     with_db(&app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
-    render(&app, &mut deck);
+    render_or_summary(&app, &mut deck);
     drop(deck);
     // A cycle only happens when a focused PinShot window received the arrow key,
     // so re-assert that focus on the single-mode viewer — render() re-shows the
     // window, which would otherwise reset first-responder and break the NEXT
-    // arrow press. (No-op effect on focus for "show all".)
-    if single {
+    // arrow press. (No-op effect on focus for "show all"; skip while hidden.)
+    if single && revealed {
         focus_panel(&app, PIN_LABELS[0]);
     }
 }
@@ -1233,11 +1259,15 @@ pub fn arrange_pins(app: AppHandle, store: State<PinStore>) {
     let work_h = (mon.height * 0.90).max(1.0);
     let gap = 12.0_f64;
 
+    // Only the images "show all" can actually display (the window pool) get laid
+    // out — don't shrink the visible ones to make room for off-screen extras.
+    let n = deck.images.len().min(pool_size());
     // Each image's current on-screen size (logical) — collapsed pins count as
     // their expanded fit so arranging always lays out real images.
     let sizes: Vec<(f64, f64)> = deck
         .images
         .iter()
+        .take(n)
         .map(|i| (i.image.fit_w * i.scale, i.image.fit_h * i.scale))
         .collect();
 

@@ -27,6 +27,8 @@ export interface DeckSummary {
   sessionId: number;
   /** false right after launch — pins are loaded but hidden until revealed. */
   revealed: boolean;
+  /** How many images "show all" can display at once (window-pool size). */
+  poolSize: number;
 }
 
 export interface SessionInfo {

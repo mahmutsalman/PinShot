@@ -104,9 +104,18 @@ on it.
 ## Conventions
 
 - After changing Rust: `cd src-tauri && cargo check`. After TS: `npm run build`.
-- Max images = `PIN_LABELS.len()` (6). To change, declare more/fewer windows in
+- **Capacity is decoupled from the window pool.** A session holds up to
+  `MAX_IMAGES` (50) images — Single mode carousels through all of them in one
+  window. "Show all" can only display `pool_size()` = `PIN_LABELS.len()` (12) at
+  once (one window each); beyond that the control panel shows "showing 12 (Single
+  mode for all)". To change the pool, declare more/fewer windows in
   `tauri.conf.json`, mirror them in `capabilities/default.json` `windows`, and
-  edit the `PIN_LABELS` array — those three must stay in sync.
+  edit `PIN_LABELS` — those three must stay in sync. (More windows = more
+  always-loaded WKWebviews = more memory; 12 is the balance.)
+- **Hidden state is sticky.** When pins are hidden (`revealed == false`: after
+  "Hide pins" or launch-quiet), pasting / mode-toggle / cycle go through
+  `render_or_summary` — the image is stored + the count updates, but nothing is
+  shown until you reveal. Only an explicit reveal/switch/arrange shows pins.
 - **Persistence: SQLite sessions** (`<app-data>/pinshot.sqlite3`, via `rusqlite`
   bundled). Tables: `sessions` (name, mode, current_idx, single_pos) → `images`
   (data_url + per-pin pos/scale/opacity/collapsed/click_through) with
