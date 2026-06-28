@@ -241,9 +241,23 @@ export default function Control() {
         }}
       />
 
-      <button className="primary" onClick={() => void createPin()}>
+      {/* The two most-used actions, color-coded and grouped: cyan = Paste,
+          violet = visibility. */}
+      <button className="btn-paste" title="Paste the clipboard image as a new pin (⌥⌘V)" onClick={() => void createPin()}>
         📷 Paste a new pin
       </button>
+
+      {deck.count > 0 && (
+        <button
+          className={`btn-visibility${deck.revealed ? "" : " off"}`}
+          title={deck.revealed ? "Hide the pins (kept in the session)" : "Show the pins on screen"}
+          onClick={() => (deck.revealed ? void hidePins() : void revealPins())}
+        >
+          {deck.revealed ? "🙈 Hide pins" : `👁 Show ${deck.count} pin${deck.count === 1 ? "" : "s"}`}
+        </button>
+      )}
+
+      <div className="divider" />
 
       {/* View mode: show every image at once, or one at a time + navigation. */}
       <div className="mode-toggle" title="Show every pin at once, or one at a time">
@@ -285,19 +299,9 @@ export default function Control() {
         </button>
       )}
 
-      {/* Show / hide the pasted images without losing them. */}
       {deck.count > 0 && (
-        <button
-          className={deck.revealed ? "ghost" : "primary"}
-          onClick={() => (deck.revealed ? void hidePins() : void revealPins())}
-        >
-          {deck.revealed ? "🙈 Hide pins" : `👁 Show ${deck.count} pin${deck.count === 1 ? "" : "s"}`}
-        </button>
-      )}
-
-      {deck.count > 0 && (
-        <button className="ghost" onClick={() => void confirmCloseAll()}>
-          Close all ({deck.count})
+        <button className="btn-danger" title="Permanently remove every image in this session" onClick={() => void confirmCloseAll()}>
+          🗑 Close all ({deck.count})
         </button>
       )}
 

@@ -1,5 +1,7 @@
 :root {
   --accent: #38bdf8;
+  --viz: #a78bfa;
+  --danger: #f87171;
   --panel-bg: rgba(22, 24, 30, 0.92);
   --panel-border: rgba(255, 255, 255, 0.1);
   --text: #e8eaed;
@@ -211,7 +213,61 @@ kbd {
   filter: brightness(1.08);
 }
 
-/* View-mode segmented toggle */
+/* === Color-coded primary actions ===
+   cyan = Paste (chunky square), violet = visibility, red = destructive.
+   This is what makes the buttons tell-apart-able at a glance. */
+.btn-paste {
+  padding: 14px 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #06121a;
+  background: var(--accent);
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(56, 189, 248, 0.35);
+}
+.btn-paste:hover {
+  filter: brightness(1.08);
+}
+.btn-visibility {
+  padding: 11px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #140a28;
+  background: var(--viz);
+  border: none;
+  border-radius: 10px;
+}
+.btn-visibility:hover {
+  filter: brightness(1.08);
+}
+/* When pins are hidden, the visibility button is an outline (call-to-show). */
+.btn-visibility.off {
+  color: var(--viz);
+  background: rgba(167, 139, 250, 0.16);
+  border: 1px solid var(--viz);
+}
+.btn-danger {
+  padding: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+}
+.btn-danger:hover {
+  background: rgba(248, 113, 113, 0.16);
+}
+
+/* Thin separator between the primary actions and the view controls. */
+.divider {
+  height: 1px;
+  background: var(--panel-border);
+  margin: 1px 0;
+}
+
+/* View-mode segmented toggle — neutral highlight (cyan is reserved for Paste). */
 .mode-toggle {
   display: flex;
   gap: 4px;
@@ -226,11 +282,12 @@ kbd {
   font-size: 12px;
   border: none;
   background: transparent;
+  color: var(--muted);
   border-radius: 6px;
 }
 .mode-toggle button.on {
-  background: var(--accent);
-  color: #06121a;
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text);
   font-weight: 600;
 }
 
