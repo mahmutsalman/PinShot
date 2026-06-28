@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   type PinView,
   getPinView,
@@ -219,6 +220,16 @@ export default function Pin() {
     setPan({ x: 0, y: 0 });
   }
 
+  // Closing a pin permanently removes that image from the saved session, so
+  // confirm first — this is the main way images were getting lost.
+  async function confirmClose(imageId: number) {
+    const ok = await ask("Remove this image from the session? It won't be saved.", {
+      title: "PinShot",
+      kind: "warning",
+    });
+    if (ok) void closeImage(imageId);
+  }
+
   if (!view) return <div className="pin empty" />;
 
   const single = view.mode === "single";
@@ -232,7 +243,7 @@ export default function Pin() {
           <button className="ic" title="Expand" onClick={toggleCollapsed}>
             ⤢
           </button>
-          <button className="ic" title="Close" onClick={() => void closeImage(view.id)}>
+          <button className="ic" title="Close" onClick={() => void confirmClose(view.id)}>
             ✕
           </button>
         </div>
@@ -270,7 +281,7 @@ export default function Pin() {
           >
             ⚙
           </button>
-          <button className="ic close" title="Close pin" onClick={() => void closeImage(view.id)}>
+          <button className="ic close" title="Close pin" onClick={() => void confirmClose(view.id)}>
             ✕
           </button>
         </div>
@@ -389,7 +400,7 @@ export default function Pin() {
         >
           👆
         </button>
-        <button className="ic close" title="Close pin" onClick={() => void closeImage(view.id)}>
+        <button className="ic close" title="Close pin" onClick={() => void confirmClose(view.id)}>
           ✕
         </button>
       </div>

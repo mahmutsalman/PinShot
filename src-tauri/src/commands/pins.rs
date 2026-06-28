@@ -482,6 +482,14 @@ pub fn init_store(app: &AppHandle) {
     let conn = open_db(app);
     let active = db_active_or_init(&conn);
     let (images, mode, current, single_pos) = db_load_session(&conn, active);
+    // Forensic breadcrumb: how much data exists at launch (catches any loss).
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM images", [], |r| r.get(0))
+        .unwrap_or(-1);
+    log::info!(
+        "init_store: active_session={active}, loaded {} images for it, {total} images total in DB",
+        images.len()
+    );
     {
         let store = app.state::<PinStore>();
         let mut deck = store.0.lock().unwrap();
@@ -887,6 +895,7 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
             return Err(format!("Could not save the pin to the database: {e}"));
         }
     };
+    log::info!("create_pin: saved image id={id} to session={session_id}");
 
     deck.images.push(DeckImage {
         id,
@@ -1016,6 +1025,11 @@ pub fn resize_pin(app: AppHandle, label: String, width: f64, height: f64, center
 pub fn close_image(app: AppHandle, store: State<PinStore>, id: u64) {
     let mut deck = store.0.lock().unwrap();
     if let Some(i) = find_index(&deck, id) {
+        log::warn!(
+            "close_image: deleting image id={id} from session={} (had {} images)",
+            deck.active_session,
+            deck.images.len()
+        );
         deck.images.remove(i);
         if deck.current > i || deck.current >= deck.images.len() {
             deck.current = deck.current.saturating_sub(1);
@@ -1033,6 +1047,11 @@ pub fn close_image(app: AppHandle, store: State<PinStore>, id: u64) {
 #[tauri::command]
 pub fn close_all_pins(app: AppHandle, store: State<PinStore>) {
     let mut deck = store.0.lock().unwrap();
+    log::warn!(
+        "close_all_pins: deleting ALL {} images from session={}",
+        deck.images.len(),
+        deck.active_session
+    );
     deck.images.clear();
     deck.current = 0;
     let (session_id, mode) = (deck.active_session, deck.mode);
@@ -1207,6 +1226,7 @@ pub fn rename_session(app: AppHandle, store: State<PinStore>, id: i64, name: Str
 pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
     let mut deck = store.0.lock().unwrap();
     let was_active = deck.active_session == id;
+    log::warn!("delete_session: deleting session id={id} and its images");
     with_db(&app, |c| {
         // FK cascade is off — delete the session's images explicitly so they
         // don't linger as orphans.

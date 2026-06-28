@@ -103,8 +103,25 @@ pub fn run() {
                             }
                             "show_hide" => pins::toggle_control_internal(app),
                             "close_all" => {
-                                let store = app.state::<PinStore>();
-                                close_all_pins(app.clone(), store);
+                                // Confirm — this permanently removes the active
+                                // session's images (the tray bypasses the
+                                // in-app confirmation dialog).
+                                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                                let ok = app
+                                    .dialog()
+                                    .message(
+                                        "Close all pins? This permanently removes the current session's images.",
+                                    )
+                                    .title("PinShot")
+                                    .buttons(MessageDialogButtons::OkCancelCustom(
+                                        "Close all".into(),
+                                        "Cancel".into(),
+                                    ))
+                                    .blocking_show();
+                                if ok {
+                                    let store = app.state::<PinStore>();
+                                    close_all_pins(app.clone(), store);
+                                }
                             }
                             "quit" => app.exit(0),
                             _ => {}
