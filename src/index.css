@@ -305,6 +305,11 @@ kbd {
   display: block;
   object-fit: fill;
   -webkit-user-drag: none;
+  border-radius: 8px;
+  /* Subtle frame around each pinned image (inset so it never clips / shifts
+     layout, and a soft outer shadow to lift it off the background). */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 2px 12px rgba(0, 0, 0, 0.35);
 }
 
 /* Top-right toggle that reveals the toolbar (so controls don't cover content).

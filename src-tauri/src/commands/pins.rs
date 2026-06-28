@@ -1171,6 +1171,122 @@ pub fn hide_pins(app: AppHandle, store: State<PinStore>) {
     emit_summary(&app, &deck);
 }
 
+/// Auto-arrange every image on the cursor's monitor so they're all visible and
+/// as large as fit allows — no overlap. Uses each image's CURRENT displayed size
+/// (`fit × scale`, so your zoom is respected), shelf-packs them left-to-right,
+/// and shrinks everything by one uniform factor if the screen can't hold them at
+/// full size. Switches to "Show all" and re-renders. Dependency-free: for ≤6
+/// pins a heavy bin-packer (binpack2d / rectangle-pack) buys nothing over this.
+#[tauri::command]
+pub fn arrange_pins(app: AppHandle, store: State<PinStore>) {
+    let mut deck = store.0.lock().unwrap();
+    if deck.images.is_empty() {
+        return;
+    }
+    let Some(monitor) = cursor_monitor(&app) else {
+        deck.mode = Mode::All;
+        render(&app, &mut deck);
+        return;
+    };
+    let sf = monitor.scale_factor();
+    let mon = monitor.size().to_logical::<f64>(sf);
+    let work_w = (mon.width * 0.94).max(1.0);
+    let work_h = (mon.height * 0.90).max(1.0);
+    let gap = 12.0_f64;
+
+    // Each image's current on-screen size (logical) — collapsed pins count as
+    // their expanded fit so arranging always lays out real images.
+    let sizes: Vec<(f64, f64)> = deck
+        .images
+        .iter()
+        .map(|i| (i.image.fit_w * i.scale, i.image.fit_h * i.scale))
+        .collect();
+
+    // Shelf-pack at an extra uniform factor `f`; Some(placements) if it fits the
+    // work area, else None.
+    let pack = |f: f64| -> Option<Vec<(f64, f64)>> {
+        let mut placements = Vec::with_capacity(sizes.len());
+        let (mut x, mut y, mut row_h) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for (w, h) in &sizes {
+            let (sw, sh) = (w * f, h * f);
+            if x > 0.0 && x + sw > work_w + 0.5 {
+                x = 0.0;
+                y += row_h;
+                row_h = 0.0;
+            }
+            placements.push((x, y));
+            x += sw + gap;
+            row_h = row_h.max(sh + gap);
+        }
+        if y + row_h <= work_h + 0.5 {
+            Some(placements)
+        } else {
+            None
+        }
+    };
+
+    // Largest factor in (0, 1] that fits (never upscale past current size).
+    let mut best = pack(0.05).map(|p| (0.05_f64, p));
+    let (mut lo, mut hi) = (0.05_f64, 1.0_f64);
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if let Some(p) = pack(mid) {
+            best = Some((mid, p));
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let Some((f, placements)) = best else {
+        deck.mode = Mode::All;
+        render(&app, &mut deck);
+        return;
+    };
+
+    // Center the packed block within the work area.
+    let used_w = placements
+        .iter()
+        .zip(&sizes)
+        .map(|((x, _), (w, _))| x + w * f)
+        .fold(0.0_f64, f64::max);
+    let used_h = placements
+        .iter()
+        .zip(&sizes)
+        .map(|((_, y), (_, h))| y + h * f)
+        .fold(0.0_f64, f64::max);
+    let off_x = ((mon.width - used_w) / 2.0).max(0.0);
+    let off_y = ((mon.height - used_h) / 2.0).max(28.0); // clear of the menu bar
+
+    let mp = monitor.position();
+    for (i, (lx, ly)) in placements.iter().enumerate() {
+        let px = mp.x + (((off_x + lx) * sf).round() as i32);
+        let py = mp.y + (((off_y + ly) * sf).round() as i32);
+        deck.images[i].pos = Some((px, py));
+        deck.images[i].scale *= f;
+        deck.images[i].collapsed = false;
+    }
+    deck.mode = Mode::All;
+
+    // Persist the new layout (positions + scales + uncollapsed) and meta.
+    let rows: Vec<(u64, (i32, i32), f64)> = deck
+        .images
+        .iter()
+        .map(|i| (i.id, i.pos.unwrap_or((0, 0)), i.scale))
+        .collect();
+    let (session_id, mode, current, single_pos) =
+        (deck.active_session, deck.mode, deck.current, deck.single_pos);
+    with_db(&app, |c| {
+        for (id, (x, y), scale) in &rows {
+            db_update_image_pos(c, *id, *x, *y);
+            db_update_image_scale(c, *id, *scale);
+            db_update_image_collapsed(c, *id, false);
+        }
+        db_set_session_meta(c, session_id, mode, current, single_pos);
+    });
+
+    render(&app, &mut deck);
+}
+
 // --- control window ----------------------------------------------------------
 
 fn position_top_right(window: &WebviewWindow, monitor: &Monitor, win_width: f64) {

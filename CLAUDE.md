@@ -61,6 +61,12 @@ on it.
   **Show all / Single** mode toggle (`set_mode`), the deck count / carousel
   position with ‹ › nav (`deck_step`), a **Show N pins** reveal button (only when
   loaded-but-hidden after launch), Close all.
+- **Arrange all** (`arrange_pins`): shelf-packs every image onto the cursor's
+  monitor (no overlap, all visible), shrinking by one uniform factor if needed.
+  Reads each image's *current* size (`fit × scale`, so zoom is respected),
+  switches to Show all, persists the new pos/scale. Dependency-free built-in
+  (a bin-packer crate buys nothing for ≤6 pins + scale-to-fit).
+- Each pinned image has a subtle inset frame (1px ring + soft shadow).
 - macOS: clicking the **Dock icon** (handled via `RunEvent::Reopen`) re-shows the
   control panel in place; ⌥⌘P and Dock both reappear it where you left it (panels
   retain their frame — we no longer force it back to the top-right corner).

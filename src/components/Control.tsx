@@ -19,6 +19,7 @@ import {
   deleteSession,
   revealPins,
   hidePins,
+  arrangePins,
   resizePin,
 } from "../lib/ipc";
 
@@ -247,6 +248,13 @@ export default function Control() {
         <p className="count-line">
           {deck.count} pin{deck.count === 1 ? "" : "s"}
         </p>
+      )}
+
+      {/* Tidy every image onto the screen, sized so all are readable. */}
+      {deck.count > 1 && (
+        <button className="ghost" title="Lay all pins out on screen, no overlap" onClick={() => void arrangePins()}>
+          ▦ Arrange all
+        </button>
       )}
 
       {/* Show / hide the pasted images without losing them. */}
