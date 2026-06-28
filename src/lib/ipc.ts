@@ -1,0 +1,74 @@
+import { invoke } from "@tauri-apps/api/core";
+import { message } from "@tauri-apps/plugin-dialog";
+
+/** Full render payload for one pin window (matches Rust `PinView`). */
+export interface PinView {
+  id: number;
+  dataUrl: string;
+  width: number;
+  height: number;
+  /** Logical size the image was fitted to — the 100% zoom baseline. */
+  fitW: number;
+  fitH: number;
+  scale: number;
+  opacity: number;
+  collapsed: boolean;
+  mode: "all" | "single";
+  index: number; // 1-based position in the deck
+  total: number;
+  clickThrough: boolean;
+}
+
+export interface DeckSummary {
+  count: number;
+  mode: "all" | "single";
+  current: number; // 1-based, 0 when empty
+  anyClickThrough: boolean;
+}
+
+/** Run a command, surfacing any error in a native dialog (alerts are no-ops in
+ *  the non-activating panel). Returns undefined on failure. */
+export async function safeInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>
+): Promise<T | undefined> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (err) {
+    await message(String(err), { kind: "warning", title: "PinShot" });
+    return undefined;
+  }
+}
+
+const quiet = (cmd: string, args?: Record<string, unknown>) =>
+  invoke(cmd, args).catch(() => {});
+
+// control / deck
+export const createPin = () => safeInvoke<number>("create_pin");
+export const closeAllPins = () => safeInvoke<void>("close_all_pins");
+export const toggleControl = () => safeInvoke<void>("toggle_control");
+export const quitApp = () => safeInvoke<void>("quit_app");
+export const setMode = (all: boolean) => quiet("set_mode", { all });
+export const deckStep = (delta: number) => quiet("deck_step", { delta });
+/** Make this window the key window so ← / → reach it (deterministic focus). */
+export const focusPin = (label: string) => quiet("focus_pin", { label });
+export const getDeckSummary = () =>
+  invoke<DeckSummary>("get_deck_summary").catch(() => null);
+
+// per-window / per-image
+export const getPinView = (label: string) =>
+  invoke<PinView | null>("get_pin_view", { label }).catch(() => null);
+export const replaceImage = (id: number) => safeInvoke<void>("replace_image", { id });
+export const closeImage = (id: number) => quiet("close_image", { id });
+export const setImagePos = (id: number, x: number, y: number) =>
+  quiet("set_image_pos", { id, x, y });
+export const setImageScale = (id: number, scale: number) =>
+  quiet("set_image_scale", { id, scale });
+export const setImageOpacity = (id: number, opacity: number) =>
+  quiet("set_image_opacity", { id, opacity });
+export const setImageCollapsed = (id: number, collapsed: boolean) =>
+  quiet("set_image_collapsed", { id, collapsed });
+export const setImageClickThrough = (id: number, ignore: boolean) =>
+  quiet("set_image_click_through", { id, ignore });
+export const resizePin = (label: string, width: number, height: number, center: boolean) =>
+  quiet("resize_pin", { label, width, height, center });

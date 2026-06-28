@@ -1,0 +1,12 @@
+# dependencies
+node_modules
+# build output
+dist
+# rust
+src-tauri/target
+# logs / os
+*.log
+.DS_Store
+# editor
+.vscode/*
+!.vscode/extensions.json
