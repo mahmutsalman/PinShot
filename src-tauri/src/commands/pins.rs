@@ -157,6 +157,7 @@ pub struct SessionInfo {
     active: bool,
     #[serde(rename = "lastUsed")]
     last_used: i64,
+    starred: bool,
 }
 
 /// SQLite handle (managed state). Opened once in setup; see [`init_store`].
@@ -198,6 +199,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   name TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_used INTEGER,
+  starred INTEGER NOT NULL DEFAULT 0,
   mode TEXT NOT NULL DEFAULT 'all',
   current_idx INTEGER NOT NULL DEFAULT 0,
   single_pos_x INTEGER,
@@ -245,7 +247,19 @@ pub fn open_db(app: &AppHandle) -> Connection {
         "UPDATE sessions SET last_used = created_at WHERE last_used IS NULL",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     conn
+}
+
+/// Star / unstar a session (starred ones are pinned to the mini-bar quick list).
+fn db_set_starred(conn: &Connection, id: i64, starred: bool) {
+    let _ = conn.execute(
+        "UPDATE sessions SET starred=?1 WHERE id=?2",
+        params![starred as i64, id],
+    );
 }
 
 fn db_create_session(conn: &Connection, name: &str) -> i64 {
@@ -451,7 +465,7 @@ fn db_load_session(conn: &Connection, session_id: i64) -> (Vec<DeckImage>, Mode,
 fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
     let mut out = Vec::new();
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT s.id, s.name, COUNT(i.id), COALESCE(s.last_used, s.created_at, 0)
+        "SELECT s.id, s.name, COUNT(i.id), COALESCE(s.last_used, s.created_at, 0), COALESCE(s.starred, 0)
          FROM sessions s LEFT JOIN images i ON i.session_id = s.id
          GROUP BY s.id ORDER BY s.id ASC",
     ) {
@@ -463,6 +477,7 @@ fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
                 count: r.get::<_, i64>(2)? as usize,
                 active: id == active,
                 last_used: r.get(3)?,
+                starred: r.get::<_, i64>(4)? != 0,
             })
         }) {
             out.extend(rows.flatten());
@@ -1244,6 +1259,14 @@ pub fn rename_session(app: AppHandle, store: State<PinStore>, id: i64, name: Str
             params![name, id],
         );
     });
+    let deck = store.0.lock().unwrap();
+    emit_sessions(&app, &deck);
+}
+
+/// Star / unstar a session — starred ones are pinned to the mini-bar quick list.
+#[tauri::command]
+pub fn set_session_starred(app: AppHandle, store: State<PinStore>, id: i64, starred: bool) {
+    with_db(&app, |c| db_set_starred(c, id, starred));
     let deck = store.0.lock().unwrap();
     emit_sessions(&app, &deck);
 }

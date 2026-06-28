@@ -308,10 +308,35 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.mini-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mini-chip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mini-star {
+  color: #fbbf24;
+  flex: 0 0 auto;
+}
 .mini-chip.on {
   border-color: var(--accent);
   background: rgba(56, 189, 248, 0.16);
   color: var(--text);
+}
+
+/* Star toggle on session rows (sessions pane). */
+.ic.star {
+  color: var(--muted);
+  font-size: 14px;
+}
+.ic.star.on {
+  color: #fbbf24;
 }
 
 /* Save-confirmation toast: an overlay INSIDE the panel (absolute, so it never

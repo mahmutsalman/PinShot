@@ -38,6 +38,8 @@ export interface SessionInfo {
   active: boolean;
   /** Unix seconds of last use (paste/switch) — for the mini-bar recent list. */
   lastUsed: number;
+  /** Pinned to the mini-bar quick list regardless of recency. */
+  starred: boolean;
 }
 
 /** Run a command, surfacing any error in a native dialog (alerts are no-ops in
@@ -77,6 +79,8 @@ export const createSession = (name: string) =>
 export const switchSession = (id: number) => quiet("switch_session", { id });
 export const renameSession = (id: number, name: string) =>
   quiet("rename_session", { id, name });
+export const setSessionStarred = (id: number, starred: boolean) =>
+  quiet("set_session_starred", { id, starred });
 export const deleteSession = (id: number) => quiet("delete_session", { id });
 export const revealPins = () => quiet("reveal_pins");
 export const hidePins = () => quiet("hide_pins");

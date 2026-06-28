@@ -74,10 +74,12 @@ on it.
   Show/Hide pins (outline when hidden), red = Close all (destructive). Mode
   toggle uses a neutral highlight so cyan stays unique to Paste.
 - **Collapsed mini bar** (⊟ in titlebar, persisted in `localStorage` `pinshot.mini`):
-  small Paste + Show/Hide + grip + ⤢ expand, plus a row of the **3 most-recently-used
-  sessions** as quick-switch chips (click → switch, then Paste lands there). Recency
-  = `sessions.last_used` (bumped on paste/switch; migrated via `ALTER TABLE`). Mini
-  window uses a fixed width (220) with content flexing; height measured.
+  small Paste + Show/Hide + grip + ⤢ expand, plus a **vertical quick-switch list**
+  of sessions (click → switch, then Paste lands there). The list is **starred
+  sessions first (pinned, always shown), then most-recent**, capped at 5. Recency
+  = `sessions.last_used`, star = `sessions.starred` (both migrated via `ALTER TABLE`;
+  star toggled by the ☆/★ button on each row in the sessions pane via
+  `set_session_starred`). Mini window: fixed width 248, height = `52 + n*29`.
 - **Visibility is global + sticky across sessions.** `revealed` is one deck-level
   flag; `switch_session`/`create_session`/`delete_session` go through
   `render_or_summary`, so hiding pins stays hidden when you switch sessions (and

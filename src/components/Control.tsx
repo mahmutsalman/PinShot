@@ -17,6 +17,7 @@ import {
   createSession,
   switchSession,
   renameSession,
+  setSessionStarred,
   deleteSession,
   revealPins,
   hidePins,
@@ -64,8 +65,15 @@ export default function Control() {
   const rootRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | null>(null);
 
-  // Mini bar lists up to 3 recent sessions (vertically), only with >1 session.
-  const miniChipCount = mini ? Math.min(sessions.length, 3) : 0;
+  // Mini-bar quick list: starred sessions first (always pinned), then most-recent,
+  // capped. Vertical rows; only shown when there's more than one to switch between.
+  const QUICK_MAX = 5;
+  const quick = mini
+    ? [...sessions]
+        .sort((a, b) => Number(b.starred) - Number(a.starred) || b.lastUsed - a.lastUsed)
+        .slice(0, QUICK_MAX)
+    : [];
+  const miniChipCount = quick.length;
   const miniHasChips = miniChipCount > 1;
 
   // Remember collapsed/expanded across restarts.
@@ -208,9 +216,6 @@ export default function Control() {
     </div>
   );
 
-  // Most-recently-used sessions (for the mini-bar quick switch).
-  const recent = [...sessions].sort((a, b) => b.lastUsed - a.lastUsed).slice(0, 3);
-
   // --- Collapsed mini bar: the two most-used actions + recent-session quick
   // switch, smaller, same colors.
   if (mini) {
@@ -242,17 +247,19 @@ export default function Control() {
           </button>
         </div>
 
-        {/* Recent sessions — click to switch, then Paste lands in that one. */}
-        {recent.length > 1 && (
+        {/* Quick sessions (starred pinned first) — click to switch, then Paste
+            lands in that one. */}
+        {miniHasChips && (
           <div className="mini-sessions">
-            {recent.map((s) => (
+            {quick.map((s) => (
               <button
                 key={s.id}
                 className={`mini-chip${s.id === deck.sessionId ? " on" : ""}`}
                 title={`Switch to "${s.name}" (${s.count} pins)`}
                 onClick={() => void switchSession(s.id)}
               >
-                {s.name}
+                {s.starred && <span className="mini-star">★</span>}
+                <span className="mini-chip-name">{s.name}</span>
               </button>
             ))}
           </div>
@@ -277,6 +284,13 @@ export default function Control() {
         <div className="session-list">
           {sessions.map((s) => (
             <div key={s.id} className={`session-item${s.active ? " on" : ""}`}>
+              <button
+                className={`ic star${s.starred ? " on" : ""}`}
+                title={s.starred ? "Unpin from quick list" : "Pin to quick list (star)"}
+                onClick={() => void setSessionStarred(s.id, !s.starred)}
+              >
+                {s.starred ? "★" : "☆"}
+              </button>
               <button
                 className="session-pick"
                 title={`Switch to ${s.name}`}
