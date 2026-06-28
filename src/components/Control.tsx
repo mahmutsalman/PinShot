@@ -64,6 +64,9 @@ export default function Control() {
   const rootRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | null>(null);
 
+  // Mini bar shows recent-session chips only when there's more than one session.
+  const miniHasChips = mini && sessions.length > 1;
+
   // Remember collapsed/expanded across restarts.
   useEffect(() => {
     try {
@@ -94,17 +97,20 @@ export default function Control() {
     const el = rootRef.current;
     if (!el) return;
     const fit = () => {
-      // Fixed width per mode (content flexes inside it); measure only height so
-      // the window never clips the bar. Use scrollHeight to capture full content.
-      const w = mini ? MINI_WIDTH : CONTROL_WIDTH;
+      if (mini) {
+        // Deterministic mini sizing — measuring a tiny window inside an
+        // overflow:hidden #root is unreliable and was clipping the bar.
+        void resizePin("control", MINI_WIDTH, miniHasChips ? 92 : 50, false);
+        return;
+      }
       const h = Math.max(el.scrollHeight, Math.ceil(el.getBoundingClientRect().height));
-      if (h > 0) void resizePin("control", w, h, false);
+      if (h > 0) void resizePin("control", CONTROL_WIDTH, h, false);
     };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mini]);
+  }, [mini, miniHasChips]);
 
   useEffect(() => {
     void getDeckSummary().then((s) => s && setDeck(s));
