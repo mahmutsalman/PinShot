@@ -1,9 +1,10 @@
 mod commands;
 
 use commands::{
-    close_all_pins, close_image, create_pin, deck_step, focus_pin, get_deck_summary, get_pin_view,
-    quit_app, replace_image, resize_pin, set_image_click_through, set_image_collapsed,
-    set_image_opacity, set_image_pos, set_image_scale, set_mode, toggle_click_through_all,
+    close_all_pins, close_image, create_pin, create_session, deck_step, delete_session, focus_pin,
+    get_deck_summary, get_pin_view, list_sessions, quit_app, rename_session, replace_image,
+    resize_pin, reveal_pins, set_image_click_through, set_image_collapsed, set_image_opacity,
+    set_image_pos, set_image_scale, set_mode, switch_session, toggle_click_through_all,
     toggle_control, PinStore,
 };
 use commands::pins;
@@ -17,6 +18,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(PinStore::default())
         .setup(|app| {
+            // Open the SQLite session store, load the active session into the
+            // deck WITHOUT showing pins ("launch quiet"), and manage the conn.
+            pins::init_store(app.handle());
+
             // Global shortcuts:
             //   ⌥⌘V → pin the current clipboard image (new pin)
             //   ⌥⌘C → toggle click-through on all pins (escape hatch)
@@ -126,11 +131,25 @@ pub fn run() {
             set_mode,
             deck_step,
             focus_pin,
+            list_sessions,
+            create_session,
+            switch_session,
+            rename_session,
+            delete_session,
+            reveal_pins,
             toggle_control,
             quit_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running PinShot");
+        .build(tauri::generate_context!())
+        .expect("error while building PinShot")
+        .run(|_app, _event| {
+            // macOS: clicking the Dock icon fires Reopen. When the control panel
+            // was hidden, re-show it in place so it returns to the same spot.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                pins::show_control(_app);
+            }
+        });
 }
 
 /// Surface a clipboard / pin error to the user (the panel is non-activating, so

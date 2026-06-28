@@ -24,6 +24,16 @@ export interface DeckSummary {
   mode: "all" | "single";
   current: number; // 1-based, 0 when empty
   anyClickThrough: boolean;
+  sessionId: number;
+  /** false right after launch — pins are loaded but hidden until revealed. */
+  revealed: boolean;
+}
+
+export interface SessionInfo {
+  id: number;
+  name: string;
+  count: number;
+  active: boolean;
 }
 
 /** Run a command, surfacing any error in a native dialog (alerts are no-ops in
@@ -54,6 +64,17 @@ export const deckStep = (delta: number) => quiet("deck_step", { delta });
 export const focusPin = (label: string) => quiet("focus_pin", { label });
 export const getDeckSummary = () =>
   invoke<DeckSummary>("get_deck_summary").catch(() => null);
+
+// sessions
+export const listSessions = () =>
+  invoke<SessionInfo[]>("list_sessions").catch(() => [] as SessionInfo[]);
+export const createSession = (name: string) =>
+  safeInvoke<number>("create_session", { name });
+export const switchSession = (id: number) => quiet("switch_session", { id });
+export const renameSession = (id: number, name: string) =>
+  quiet("rename_session", { id, name });
+export const deleteSession = (id: number) => quiet("delete_session", { id });
+export const revealPins = () => quiet("reveal_pins");
 
 // per-window / per-image
 export const getPinView = (label: string) =>

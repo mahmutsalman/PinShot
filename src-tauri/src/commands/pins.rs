@@ -1,3 +1,4 @@
+use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, Monitor, State, WebviewWindow};
@@ -66,7 +67,15 @@ struct Deck {
     single_pos: Option<(i32, i32)>,
     /// window label -> image id currently shown there (rebuilt every render).
     assign: HashMap<String, u64>,
+    /// Fallback id source if a DB insert ever fails (normally image ids ARE the
+    /// SQLite rowid, so the frontend id and the DB row stay 1:1).
     next_id: u64,
+    /// The session currently loaded into this deck (SQLite `sessions.id`).
+    active_session: i64,
+    /// Whether the pins have been shown this run. On launch we load the active
+    /// session into memory but keep pins hidden ("launch quiet") until the user
+    /// reveals them or pastes; switching sessions reveals immediately.
+    revealed: bool,
 }
 
 impl Default for Deck {
@@ -78,6 +87,8 @@ impl Default for Deck {
             single_pos: None,
             assign: HashMap::new(),
             next_id: 1,
+            active_session: 0,
+            revealed: false,
         }
     }
 }
@@ -119,7 +130,23 @@ struct DeckSummary {
     current: usize,
     #[serde(rename = "anyClickThrough")]
     any_click_through: bool,
+    #[serde(rename = "sessionId")]
+    session_id: i64,
+    /// false right after launch (pins loaded but hidden) until revealed.
+    revealed: bool,
 }
+
+/// One row for the session switcher in the control panel.
+#[derive(Clone, serde::Serialize)]
+pub struct SessionInfo {
+    id: i64,
+    name: String,
+    count: usize,
+    active: bool,
+}
+
+/// SQLite handle (managed state). Opened once in setup; see [`init_store`].
+pub struct Db(pub Mutex<Connection>);
 
 fn make_view(img: &DeckImage, index: usize, total: usize, mode: Mode) -> PinView {
     PinView {
@@ -141,6 +168,294 @@ fn make_view(img: &DeckImage, index: usize, total: usize, mode: Mode) -> PinView
 
 fn find_index(deck: &Deck, id: u64) -> Option<usize> {
     deck.images.iter().position(|i| i.id == id)
+}
+
+// --- SQLite session persistence ---------------------------------------------
+//
+// One DB at `<app-data>/pinshot.sqlite3`. A `sessions` row owns many `images`
+// rows; `app_state` holds the active session id. The deck image `id` IS the
+// `images.id` rowid, so the frontend id and the DB row stay 1:1 — high-frequency
+// drags/zooms become a single targeted UPDATE, not a full rewrite.
+
+const SCHEMA: &str = "
+PRAGMA foreign_keys = ON;
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'all',
+  current_idx INTEGER NOT NULL DEFAULT 0,
+  single_pos_x INTEGER,
+  single_pos_y INTEGER
+);
+CREATE TABLE IF NOT EXISTS images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  data_url TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  fit_w REAL NOT NULL,
+  fit_h REAL NOT NULL,
+  pos_x INTEGER,
+  pos_y INTEGER,
+  scale REAL NOT NULL,
+  opacity REAL NOT NULL,
+  collapsed INTEGER NOT NULL,
+  click_through INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_state (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+";
+
+fn now_ts() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Open (creating if needed) the session DB and ensure the schema exists.
+pub fn open_db(app: &AppHandle) -> Connection {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .expect("resolve app data dir");
+    let _ = std::fs::create_dir_all(&dir);
+    let conn = Connection::open(dir.join("pinshot.sqlite3")).expect("open pinshot.sqlite3");
+    conn.execute_batch(SCHEMA).expect("init schema");
+    conn
+}
+
+fn db_create_session(conn: &Connection, name: &str) -> i64 {
+    let _ = conn.execute(
+        "INSERT INTO sessions (name, created_at) VALUES (?1, ?2)",
+        params![name, now_ts()],
+    );
+    conn.last_insert_rowid()
+}
+
+fn db_set_active(conn: &Connection, id: i64) {
+    let _ = conn.execute(
+        "INSERT INTO app_state (k, v) VALUES ('active_session', ?1)
+         ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+        params![id.to_string()],
+    );
+}
+
+/// Return the active session id, healing a missing/stale pointer: prefer the
+/// stored one, else the newest session, else create a fresh "Session 1".
+fn db_active_or_init(conn: &Connection) -> i64 {
+    let stored: Option<i64> = conn
+        .query_row(
+            "SELECT v FROM app_state WHERE k = 'active_session'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|s| s.parse().ok());
+    if let Some(id) = stored {
+        let exists = conn
+            .query_row("SELECT 1 FROM sessions WHERE id = ?1", params![id], |_| {
+                Ok(())
+            })
+            .is_ok();
+        if exists {
+            return id;
+        }
+    }
+    if let Ok(id) = conn.query_row(
+        "SELECT id FROM sessions ORDER BY id DESC LIMIT 1",
+        [],
+        |r| r.get::<_, i64>(0),
+    ) {
+        db_set_active(conn, id);
+        return id;
+    }
+    let id = db_create_session(conn, "Session 1");
+    db_set_active(conn, id);
+    id
+}
+
+fn db_insert_image(
+    conn: &Connection,
+    session_id: i64,
+    img: &PinImagePayload,
+    pos: Option<(i32, i32)>,
+    scale: f64,
+    opacity: f64,
+    collapsed: bool,
+    click_through: bool,
+) -> rusqlite::Result<i64> {
+    let (px, py) = match pos {
+        Some((x, y)) => (Some(x), Some(y)),
+        None => (None, None),
+    };
+    conn.execute(
+        "INSERT INTO images
+           (session_id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        params![
+            session_id, img.data_url, img.width, img.height, img.fit_w, img.fit_h,
+            px, py, scale, opacity, collapsed as i64, click_through as i64
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn db_update_image_data(conn: &Connection, id: u64, img: &PinImagePayload, scale: f64, collapsed: bool) {
+    let _ = conn.execute(
+        "UPDATE images SET data_url=?1, width=?2, height=?3, fit_w=?4, fit_h=?5, scale=?6, collapsed=?7 WHERE id=?8",
+        params![img.data_url, img.width, img.height, img.fit_w, img.fit_h, scale, collapsed as i64, id as i64],
+    );
+}
+
+fn db_update_image_pos(conn: &Connection, id: u64, x: i32, y: i32) {
+    let _ = conn.execute(
+        "UPDATE images SET pos_x=?1, pos_y=?2 WHERE id=?3",
+        params![x, y, id as i64],
+    );
+}
+
+fn db_update_image_scale(conn: &Connection, id: u64, scale: f64) {
+    let _ = conn.execute("UPDATE images SET scale=?1 WHERE id=?2", params![scale, id as i64]);
+}
+
+fn db_update_image_opacity(conn: &Connection, id: u64, opacity: f64) {
+    let _ = conn.execute("UPDATE images SET opacity=?1 WHERE id=?2", params![opacity, id as i64]);
+}
+
+fn db_update_image_collapsed(conn: &Connection, id: u64, collapsed: bool) {
+    let _ = conn.execute("UPDATE images SET collapsed=?1 WHERE id=?2", params![collapsed as i64, id as i64]);
+}
+
+fn db_update_image_click_through(conn: &Connection, id: u64, ct: bool) {
+    let _ = conn.execute("UPDATE images SET click_through=?1 WHERE id=?2", params![ct as i64, id as i64]);
+}
+
+fn db_delete_image(conn: &Connection, id: u64) {
+    let _ = conn.execute("DELETE FROM images WHERE id=?1", params![id as i64]);
+}
+
+fn db_delete_session_images(conn: &Connection, session_id: i64) {
+    let _ = conn.execute("DELETE FROM images WHERE session_id=?1", params![session_id]);
+}
+
+fn db_set_session_meta(conn: &Connection, session_id: i64, mode: Mode, current: usize, single_pos: Option<(i32, i32)>) {
+    let (sx, sy) = match single_pos {
+        Some((x, y)) => (Some(x), Some(y)),
+        None => (None, None),
+    };
+    let _ = conn.execute(
+        "UPDATE sessions SET mode=?1, current_idx=?2, single_pos_x=?3, single_pos_y=?4 WHERE id=?5",
+        params![mode.as_str(), current as i64, sx, sy, session_id],
+    );
+}
+
+/// Read every image + meta for one session, ready to drop into the deck.
+fn db_load_session(conn: &Connection, session_id: i64) -> (Vec<DeckImage>, Mode, usize, Option<(i32, i32)>) {
+    let mut images = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through
+         FROM images WHERE session_id=?1 ORDER BY id ASC",
+    ) {
+        if let Ok(rows) = stmt.query_map(params![session_id], |r| {
+            let px: Option<i32> = r.get(6)?;
+            let py: Option<i32> = r.get(7)?;
+            Ok(DeckImage {
+                id: r.get::<_, i64>(0)? as u64,
+                image: PinImagePayload {
+                    data_url: r.get(1)?,
+                    width: r.get(2)?,
+                    height: r.get(3)?,
+                    fit_w: r.get(4)?,
+                    fit_h: r.get(5)?,
+                },
+                pos: match (px, py) {
+                    (Some(x), Some(y)) => Some((x, y)),
+                    _ => None,
+                },
+                scale: r.get(8)?,
+                opacity: r.get(9)?,
+                collapsed: r.get::<_, i64>(10)? != 0,
+                click_through: r.get::<_, i64>(11)? != 0,
+            })
+        }) {
+            images.extend(rows.flatten());
+        }
+    }
+    let (mode_s, current, spx, spy): (String, i64, Option<i32>, Option<i32>) = conn
+        .query_row(
+            "SELECT mode, current_idx, single_pos_x, single_pos_y FROM sessions WHERE id=?1",
+            params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap_or_else(|_| ("all".to_string(), 0, None, None));
+    let mode = if mode_s == "single" { Mode::Single } else { Mode::All };
+    let single_pos = match (spx, spy) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    };
+    let current = if images.is_empty() {
+        0
+    } else {
+        (current as usize).min(images.len() - 1)
+    };
+    (images, mode, current, single_pos)
+}
+
+fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
+    let mut out = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT s.id, s.name, COUNT(i.id)
+         FROM sessions s LEFT JOIN images i ON i.session_id = s.id
+         GROUP BY s.id ORDER BY s.id ASC",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            let id: i64 = r.get(0)?;
+            Ok(SessionInfo {
+                id,
+                name: r.get(1)?,
+                count: r.get::<_, i64>(2)? as usize,
+                active: id == active,
+            })
+        }) {
+            out.extend(rows.flatten());
+        }
+    }
+    out
+}
+
+/// Convenience: lock the managed DB and run a closure with the connection.
+fn with_db<T>(app: &AppHandle, f: impl FnOnce(&Connection) -> T) -> T {
+    let db = app.state::<Db>();
+    let conn = db.0.lock().unwrap();
+    f(&conn)
+}
+
+/// Emit the current session list to the control panel (after any session op).
+fn emit_sessions(app: &AppHandle, deck: &Deck) {
+    let list = with_db(app, |c| db_list_sessions(c, deck.active_session));
+    let _ = app.emit("sessions-changed", list);
+}
+
+/// Open the DB, pick/heal the active session, load it into the deck WITHOUT
+/// showing the pins ("launch quiet"), then manage the connection. Called once
+/// from setup.
+pub fn init_store(app: &AppHandle) {
+    let conn = open_db(app);
+    let active = db_active_or_init(&conn);
+    let (images, mode, current, single_pos) = db_load_session(&conn, active);
+    {
+        let store = app.state::<PinStore>();
+        let mut deck = store.0.lock().unwrap();
+        deck.images = images;
+        deck.mode = mode;
+        deck.current = current;
+        deck.single_pos = single_pos;
+        deck.active_session = active;
+        deck.revealed = false;
+    }
+    app.manage(Db(Mutex::new(conn)));
 }
 
 // --- clipboard -> PNG data URL ----------------------------------------------
@@ -351,6 +666,8 @@ fn focus_panel(app: &AppHandle, label: &str) {
 /// positioned at its remembered spot; its view is pushed on a window-unique
 /// event (`pin-view:<label>`) so windows never cross-talk. Unused windows hide.
 fn render(app: &AppHandle, deck: &mut Deck) {
+    // Reaching render means we're showing pins — clears the "launch quiet" flag.
+    deck.revealed = true;
     let total = deck.images.len();
     let mode = deck.mode;
     if deck.current >= total {
@@ -427,6 +744,8 @@ fn emit_summary(app: &AppHandle, deck: &Deck) {
             deck.current + 1
         },
         any_click_through: deck.images.iter().any(|i| i.click_through),
+        session_id: deck.active_session,
+        revealed: deck.revealed,
     };
     let _ = app.emit("deck-changed", summary);
 }
@@ -458,17 +777,30 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
         ));
     }
 
-    let id = deck.next_id;
-    deck.next_id += 1;
+    let payload = PinImagePayload {
+        data_url,
+        width: w,
+        height: h,
+        fit_w,
+        fit_h,
+    };
+
+    // Persist the new image; its DB rowid becomes the deck id (1:1 mapping).
+    let session_id = deck.active_session;
+    let id = match with_db(app, |c| {
+        db_insert_image(c, session_id, &payload, None, 1.0, 1.0, false, false)
+    }) {
+        Ok(rowid) => rowid as u64,
+        Err(e) => {
+            log::error!("pins: db_insert_image failed: {e}");
+            deck.next_id += 1;
+            deck.next_id
+        }
+    };
+
     deck.images.push(DeckImage {
         id,
-        image: PinImagePayload {
-            data_url,
-            width: w,
-            height: h,
-            fit_w,
-            fit_h,
-        },
+        image: payload,
         pos: None,
         scale: 1.0,
         opacity: 1.0,
@@ -476,6 +808,8 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
         click_through: false,
     });
     deck.current = deck.images.len() - 1;
+    let (mode, current, single_pos) = (deck.mode, deck.current, deck.single_pos);
+    with_db(app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
 
     render(app, &mut deck);
     Ok(id)
@@ -502,6 +836,8 @@ pub fn replace_image(app: AppHandle, store: State<PinStore>, id: u64) -> Result<
     };
     deck.images[i].scale = 1.0;
     deck.images[i].collapsed = false;
+    let payload = deck.images[i].image.clone();
+    with_db(&app, |c| db_update_image_data(c, id, &payload, 1.0, false));
     render(&app, &mut deck);
     Ok(())
 }
@@ -523,44 +859,53 @@ pub fn get_deck_summary(store: State<PinStore>) -> serde_json::Value {
         "mode": deck.mode.as_str(),
         "current": if deck.images.is_empty() { 0 } else { deck.current + 1 },
         "anyClickThrough": deck.images.iter().any(|i| i.click_through),
+        "sessionId": deck.active_session,
+        "revealed": deck.revealed,
     })
 }
 
 // --- live, high-frequency mutations (store only, no re-render) ---------------
 
 #[tauri::command]
-pub fn set_image_pos(store: State<PinStore>, id: u64, x: i32, y: i32) {
+pub fn set_image_pos(app: AppHandle, store: State<PinStore>, id: u64, x: i32, y: i32) {
     let mut deck = store.0.lock().unwrap();
-    // A drag in single mode moves the shared viewer; in all mode it moves the
-    // specific image's window.
+    // A drag in single mode moves the shared viewer (persist to the session); in
+    // all mode it moves the specific image's window (persist to that row).
     if deck.mode == Mode::Single {
         deck.single_pos = Some((x, y));
+        let (session_id, mode, current, single_pos) =
+            (deck.active_session, deck.mode, deck.current, deck.single_pos);
+        with_db(&app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
     } else if let Some(i) = find_index(&deck, id) {
         deck.images[i].pos = Some((x, y));
+        with_db(&app, |c| db_update_image_pos(c, id, x, y));
     }
 }
 
 #[tauri::command]
-pub fn set_image_scale(store: State<PinStore>, id: u64, scale: f64) {
+pub fn set_image_scale(app: AppHandle, store: State<PinStore>, id: u64, scale: f64) {
     let mut deck = store.0.lock().unwrap();
     if let Some(i) = find_index(&deck, id) {
         deck.images[i].scale = scale;
+        with_db(&app, |c| db_update_image_scale(c, id, scale));
     }
 }
 
 #[tauri::command]
-pub fn set_image_opacity(store: State<PinStore>, id: u64, opacity: f64) {
+pub fn set_image_opacity(app: AppHandle, store: State<PinStore>, id: u64, opacity: f64) {
     let mut deck = store.0.lock().unwrap();
     if let Some(i) = find_index(&deck, id) {
         deck.images[i].opacity = opacity;
+        with_db(&app, |c| db_update_image_opacity(c, id, opacity));
     }
 }
 
 #[tauri::command]
-pub fn set_image_collapsed(store: State<PinStore>, id: u64, collapsed: bool) {
+pub fn set_image_collapsed(app: AppHandle, store: State<PinStore>, id: u64, collapsed: bool) {
     let mut deck = store.0.lock().unwrap();
     if let Some(i) = find_index(&deck, id) {
         deck.images[i].collapsed = collapsed;
+        with_db(&app, |c| db_update_image_collapsed(c, id, collapsed));
     }
 }
 
@@ -582,6 +927,12 @@ pub fn close_image(app: AppHandle, store: State<PinStore>, id: u64) {
         if deck.current > i || deck.current >= deck.images.len() {
             deck.current = deck.current.saturating_sub(1);
         }
+        let (session_id, mode, current, single_pos) =
+            (deck.active_session, deck.mode, deck.current, deck.single_pos);
+        with_db(&app, |c| {
+            db_delete_image(c, id);
+            db_set_session_meta(c, session_id, mode, current, single_pos);
+        });
     }
     render(&app, &mut deck);
 }
@@ -591,6 +942,11 @@ pub fn close_all_pins(app: AppHandle, store: State<PinStore>) {
     let mut deck = store.0.lock().unwrap();
     deck.images.clear();
     deck.current = 0;
+    let (session_id, mode) = (deck.active_session, deck.mode);
+    with_db(&app, |c| {
+        db_delete_session_images(c, session_id);
+        db_set_session_meta(c, session_id, mode, 0, None);
+    });
     render(&app, &mut deck);
 }
 
@@ -599,6 +955,7 @@ pub fn set_image_click_through(app: AppHandle, store: State<PinStore>, id: u64, 
     let mut deck = store.0.lock().unwrap();
     if let Some(i) = find_index(&deck, id) {
         deck.images[i].click_through = ignore;
+        with_db(&app, |c| db_update_image_click_through(c, id, ignore));
     }
     render(&app, &mut deck);
 }
@@ -614,6 +971,12 @@ pub fn toggle_click_through_all_internal(app: &AppHandle) {
     for img in deck.images.iter_mut() {
         img.click_through = next;
     }
+    let ids: Vec<u64> = deck.images.iter().map(|i| i.id).collect();
+    with_db(app, |c| {
+        for id in &ids {
+            db_update_image_click_through(c, *id, next);
+        }
+    });
     render(app, &mut deck);
 }
 
@@ -627,6 +990,9 @@ pub fn toggle_click_through_all(app: AppHandle) {
 pub fn set_mode(app: AppHandle, store: State<PinStore>, all: bool) {
     let mut deck = store.0.lock().unwrap();
     deck.mode = if all { Mode::All } else { Mode::Single };
+    let (session_id, mode, current, single_pos) =
+        (deck.active_session, deck.mode, deck.current, deck.single_pos);
+    with_db(&app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
     render(&app, &mut deck);
 }
 
@@ -641,6 +1007,9 @@ pub fn deck_step(app: AppHandle, store: State<PinStore>, delta: i32) {
     let next = ((cur + delta) % n as i32 + n as i32) % n as i32;
     deck.current = next as usize;
     let single = deck.mode == Mode::Single;
+    let (session_id, mode, current, single_pos) =
+        (deck.active_session, deck.mode, deck.current, deck.single_pos);
+    with_db(&app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
     render(&app, &mut deck);
     drop(deck);
     // A cycle only happens when a focused PinShot window received the arrow key,
@@ -658,6 +1027,116 @@ pub fn deck_step(app: AppHandle, store: State<PinStore>, delta: i32) {
 #[tauri::command]
 pub fn focus_pin(app: AppHandle, label: String) {
     focus_panel(&app, &label);
+}
+
+// --- sessions ----------------------------------------------------------------
+
+/// All sessions (with image counts) for the control-panel switcher.
+#[tauri::command]
+pub fn list_sessions(app: AppHandle, store: State<PinStore>) -> Vec<SessionInfo> {
+    let active = store.0.lock().unwrap().active_session;
+    with_db(&app, |c| db_list_sessions(c, active))
+}
+
+/// Create a fresh, empty session and switch to it (revealed = shows nothing,
+/// since it's empty). Returns the new session id.
+#[tauri::command]
+pub fn create_session(app: AppHandle, store: State<PinStore>, name: String) -> i64 {
+    let name = {
+        let t = name.trim();
+        if t.is_empty() {
+            "Untitled".to_string()
+        } else {
+            t.to_string()
+        }
+    };
+    let mut deck = store.0.lock().unwrap();
+    let id = with_db(&app, |c| {
+        let id = db_create_session(c, &name);
+        db_set_active(c, id);
+        id
+    });
+    deck.images.clear();
+    deck.current = 0;
+    deck.single_pos = None;
+    deck.mode = Mode::All;
+    deck.active_session = id;
+    render(&app, &mut deck);
+    emit_sessions(&app, &deck);
+    id
+}
+
+/// Load another session into the deck and show its pins (the current session is
+/// already auto-saved continuously, so nothing is lost).
+#[tauri::command]
+pub fn switch_session(app: AppHandle, store: State<PinStore>, id: i64) {
+    let mut deck = store.0.lock().unwrap();
+    if deck.active_session == id {
+        return;
+    }
+    let (images, mode, current, single_pos) = with_db(&app, |c| {
+        db_set_active(c, id);
+        db_load_session(c, id)
+    });
+    deck.images = images;
+    deck.mode = mode;
+    deck.current = current;
+    deck.single_pos = single_pos;
+    deck.active_session = id;
+    render(&app, &mut deck);
+    emit_sessions(&app, &deck);
+}
+
+#[tauri::command]
+pub fn rename_session(app: AppHandle, store: State<PinStore>, id: i64, name: String) {
+    let name = {
+        let t = name.trim();
+        if t.is_empty() {
+            "Untitled".to_string()
+        } else {
+            t.to_string()
+        }
+    };
+    with_db(&app, |c| {
+        let _ = c.execute(
+            "UPDATE sessions SET name=?1 WHERE id=?2",
+            params![name, id],
+        );
+    });
+    let deck = store.0.lock().unwrap();
+    emit_sessions(&app, &deck);
+}
+
+/// Delete a session (cascades its images). If it was the active one, fall back
+/// to another session (creating a default if it was the last) and show it.
+#[tauri::command]
+pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
+    let mut deck = store.0.lock().unwrap();
+    let was_active = deck.active_session == id;
+    with_db(&app, |c| {
+        let _ = c.execute("DELETE FROM sessions WHERE id=?1", params![id]);
+    });
+    if was_active {
+        let (active, images, mode, current, single_pos) = with_db(&app, |c| {
+            let active = db_active_or_init(c);
+            let (images, mode, current, single_pos) = db_load_session(c, active);
+            (active, images, mode, current, single_pos)
+        });
+        deck.images = images;
+        deck.mode = mode;
+        deck.current = current;
+        deck.single_pos = single_pos;
+        deck.active_session = active;
+        render(&app, &mut deck);
+    }
+    emit_sessions(&app, &deck);
+}
+
+/// Show the pins for the loaded session (used after a "launch quiet" startup).
+#[tauri::command]
+pub fn reveal_pins(app: AppHandle, store: State<PinStore>) {
+    let mut deck = store.0.lock().unwrap();
+    render(&app, &mut deck);
 }
 
 // --- control window ----------------------------------------------------------
@@ -680,6 +1159,15 @@ pub fn show_control_initial(app: &AppHandle) {
     show(app, &window, CONTROL_LABEL);
 }
 
+/// Show the control panel WHERE IT IS — no repositioning. NSPanels retain their
+/// frame across `order_out`/`order_front`, so this reappears it exactly where
+/// the user last had it. Used by ⌥⌘P and the macOS Dock-icon reopen.
+pub fn show_control(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(CONTROL_LABEL) {
+        show(app, &window, CONTROL_LABEL);
+    }
+}
+
 pub fn toggle_control_internal(app: &AppHandle) {
     let Some(window) = app.get_webview_window(CONTROL_LABEL) else {
         return;
@@ -687,9 +1175,8 @@ pub fn toggle_control_internal(app: &AppHandle) {
     if is_visible(app, &window, CONTROL_LABEL) {
         hide(app, &window, CONTROL_LABEL);
     } else {
-        if let Some(monitor) = cursor_monitor(app) {
-            position_top_right(&window, &monitor, CONTROL_WIDTH);
-        }
+        // Reappear in place (don't snap back to top-right). Only the initial
+        // launch positions the panel; after that it stays where it was dragged.
         show(app, &window, CONTROL_LABEL);
     }
 }

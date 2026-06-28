@@ -57,8 +57,13 @@ on it.
 
 - Global: **⌥⌘V** new pin · **⌥⌘C** toggle click-through (all) · **⌥⌘P** show/hide
   control panel. Tray mirrors these + Close All + Quit.
-- Control panel: Paste, a **Show all / Single** mode toggle (`set_mode`), the deck
-  count / carousel position with ‹ › nav (`deck_step`), Close all.
+- Control panel: a **session switcher** (dropdown + name field + ＋/🗑), Paste, a
+  **Show all / Single** mode toggle (`set_mode`), the deck count / carousel
+  position with ‹ › nav (`deck_step`), a **Show N pins** reveal button (only when
+  loaded-but-hidden after launch), Close all.
+- macOS: clicking the **Dock icon** (handled via `RunEvent::Reopen`) re-shows the
+  control panel in place; ⌥⌘P and Dock both reappear it where you left it (panels
+  retain their frame — we no longer force it back to the top-right corner).
 - **Show all** = every image visible at once at its saved position. **Single** =
   one image (the carousel) with ‹ › nav on the viewer + control panel to cycle.
 - **Arrow-key carousel nav**: in Single mode with >1 pin, ← / → cycle the deck
@@ -87,7 +92,20 @@ on it.
 - Max images = `PIN_LABELS.len()` (6). To change, declare more/fewer windows in
   `tauri.conf.json`, mirror them in `capabilities/default.json` `windows`, and
   edit the `PIN_LABELS` array — those three must stay in sync.
-- Pins persist nothing — images live in memory only; quitting clears them.
+- **Persistence: SQLite sessions** (`<app-data>/pinshot.sqlite3`, via `rusqlite`
+  bundled). Tables: `sessions` (name, mode, current_idx, single_pos) → `images`
+  (data_url + per-pin pos/scale/opacity/collapsed/click_through) with
+  `ON DELETE CASCADE`; `app_state` holds the active session id. **The deck image
+  `id` IS the `images.id` rowid** (1:1), so high-frequency drags/zooms persist as
+  a single targeted `UPDATE`, not a full rewrite. Every mutating command
+  auto-saves (`with_db` + `db_*` helpers). `init_store` (setup) opens the DB,
+  heals/creates the active session, and loads it into the deck **without showing
+  pins** ("launch quiet"); the control panel shows a "Show N pins" button while
+  `revealed == false`. `render()` sets `revealed = true`. Switching sessions
+  (`switch_session`) loads + renders immediately. Session CRUD commands:
+  `list_sessions`, `create_session`, `switch_session`, `rename_session`,
+  `delete_session`, `reveal_pins`; the control panel has a switcher dropdown +
+  name field + ＋ / 🗑. `sessions-changed` event re-feeds the switcher.
 - Install to /Applications (with the required ad-hoc re-sign): `./install.sh`.
 - `Info.plist` keeps a Dock icon; flip `LSUIElement` to run Dock-less.
 - Icons in `src-tauri/icons/` are placeholders copied from FocusFlow — replace.

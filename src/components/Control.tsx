@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
 import {
   type DeckSummary,
+  type SessionInfo,
   createPin,
   closeAllPins,
   toggleControl,
@@ -11,6 +12,12 @@ import {
   deckStep,
   focusPin,
   getDeckSummary,
+  listSessions,
+  createSession,
+  switchSession,
+  renameSession,
+  deleteSession,
+  revealPins,
 } from "../lib/ipc";
 
 /** Drag the panel except from real controls. Any primary click first grabs
@@ -19,22 +26,43 @@ function onDragStart(e: React.MouseEvent) {
   if (e.button !== 0) return;
   const w = getCurrentWebviewWindow();
   void focusPin(w.label);
-  if ((e.target as HTMLElement).closest("button")) return;
+  if ((e.target as HTMLElement).closest("button, input, select")) return;
   void w.startDragging();
 }
 
-const EMPTY: DeckSummary = { count: 0, mode: "all", current: 0, anyClickThrough: false };
+const EMPTY: DeckSummary = {
+  count: 0,
+  mode: "all",
+  current: 0,
+  anyClickThrough: false,
+  sessionId: 0,
+  revealed: true,
+};
 
 export default function Control() {
   const [deck, setDeck] = useState<DeckSummary>(EMPTY);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [name, setName] = useState("");
+  const editing = useRef(false);
 
   useEffect(() => {
     void getDeckSummary().then((s) => s && setDeck(s));
-    const un = listen<DeckSummary>("deck-changed", (e) => setDeck(e.payload));
+    void listSessions().then(setSessions);
+    const unDeck = listen<DeckSummary>("deck-changed", (e) => setDeck(e.payload));
+    const unSess = listen<SessionInfo[]>("sessions-changed", (e) => setSessions(e.payload));
     return () => {
-      void un.then((f) => f());
+      void unDeck.then((f) => f());
+      void unSess.then((f) => f());
     };
   }, []);
+
+  const active = sessions.find((s) => s.active);
+
+  // Keep the rename field synced with the active session — but not while the
+  // user is actively typing in it.
+  useEffect(() => {
+    if (!editing.current) setName(active?.name ?? "");
+  }, [active?.id, active?.name]);
 
   const showAll = deck.mode === "all";
   const single = deck.mode === "single";
@@ -56,6 +84,12 @@ export default function Control() {
     return () => window.removeEventListener("keydown", onKey);
   }, [single, deck.count]);
 
+  function commitName() {
+    editing.current = false;
+    const n = name.trim();
+    if (active && n && n !== active.name) void renameSession(active.id, n);
+  }
+
   return (
     <div className="control" onMouseDown={onDragStart}>
       <div className="titlebar">
@@ -69,6 +103,50 @@ export default function Control() {
           </button>
         </div>
       </div>
+
+      {/* Sessions: pasted images persist per session in SQLite. Switch / rename
+          / new / delete. Switching shows that session's pins immediately. */}
+      <div className="session-row">
+        <select
+          className="session-select"
+          title="Switch session"
+          value={active?.id ?? ""}
+          onChange={(e) => void switchSession(Number(e.target.value))}
+        >
+          {sessions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.count})
+            </option>
+          ))}
+        </select>
+        <button
+          className="ic"
+          title="New session"
+          onClick={() => void createSession(`Session ${sessions.length + 1}`)}
+        >
+          ＋
+        </button>
+        <button
+          className="ic"
+          title="Delete this session"
+          disabled={sessions.length <= 1}
+          onClick={() => active && void deleteSession(active.id)}
+        >
+          🗑
+        </button>
+      </div>
+      <input
+        className="session-name"
+        value={name}
+        title="Rename session (Enter to save)"
+        placeholder="Session name"
+        onFocus={() => (editing.current = true)}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={commitName}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+      />
 
       <button className="primary" onClick={() => void createPin()}>
         📷 Paste a new pin
@@ -102,8 +180,14 @@ export default function Control() {
         </div>
       ) : (
         <p className="count-line">
-          {deck.count} pin{deck.count === 1 ? "" : "s"} shown
+          {deck.count} pin{deck.count === 1 ? "" : "s"}
         </p>
+      )}
+
+      {deck.count > 0 && !deck.revealed && (
+        <button className="primary" onClick={() => void revealPins()}>
+          👁 Show {deck.count} pin{deck.count === 1 ? "" : "s"}
+        </button>
       )}
 
       {deck.count > 0 && (
