@@ -19,7 +19,10 @@ import {
   deleteSession,
   revealPins,
   hidePins,
+  resizePin,
 } from "../lib/ipc";
+
+const CONTROL_WIDTH = 232;
 
 /** Drag the panel except from real controls. Any primary click first grabs
  *  keyboard focus so ← / → reach the panel. */
@@ -46,6 +49,23 @@ export default function Control() {
   const [name, setName] = useState("");
   const [pane, setPane] = useState<"main" | "sessions">("main");
   const editing = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Keep the native window exactly as tall as the panel content (so the bottom
+  // hint is never clipped). A ResizeObserver re-fits on every content change —
+  // pane switches, count changes, show/hide, etc.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const fit = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      if (h > 0) void resizePin("control", CONTROL_WIDTH, h, false);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     void getDeckSummary().then((s) => s && setDeck(s));
@@ -109,7 +129,7 @@ export default function Control() {
   // a transparent non-activating panel). Pick a session to switch to it. --------
   if (pane === "sessions") {
     return (
-      <div className="control" onMouseDown={onDragStart}>
+      <div className="control" ref={rootRef} onMouseDown={onDragStart}>
         {titlebar}
         <div className="pane-head">
           <span className="pane-title">Sessions</span>
@@ -157,7 +177,7 @@ export default function Control() {
 
   // --- Main pane ---------------------------------------------------------------
   return (
-    <div className="control" onMouseDown={onDragStart}>
+    <div className="control" ref={rootRef} onMouseDown={onDragStart}>
       {titlebar}
 
       {/* Session bar: open the list to switch; rename the active one inline.
