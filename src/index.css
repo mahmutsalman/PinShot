@@ -260,6 +260,49 @@ kbd {
   background: rgba(248, 113, 113, 0.16);
 }
 
+/* Collapsed "mini bar": just the two most-used actions, smaller, same colors. */
+.control.mini {
+  width: fit-content;
+  max-width: 260px;
+  padding: 7px 8px;
+}
+.control.mini .toast {
+  margin-bottom: 6px;
+}
+.mini-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mini-grip {
+  font-size: 14px;
+  cursor: grab;
+  padding: 0 2px;
+}
+.mini-btn {
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 9px;
+  box-shadow: none;
+  white-space: nowrap;
+}
+.btn-paste.mini-btn {
+  flex: 1;
+}
+
+/* Save-confirmation toast (shown on every successful paste). */
+.toast {
+  padding: 7px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  color: #04140a;
+  background: #34d399;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(52, 211, 153, 0.4);
+}
+
 /* Thin separator between the primary actions and the view controls. */
 .divider {
   height: 1px;

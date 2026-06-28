@@ -912,7 +912,11 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
 
     // Respect the current visibility: pasting while hidden adds the image to the
     // session but keeps everything hidden (the count updates; reveal to show).
+    let count = deck.images.len();
     render_or_summary(app, &mut deck);
+    // Tell the control panel a save succeeded (covers paste via button, ⌥⌘V, and
+    // the tray) so it can show a confirmation toast.
+    let _ = app.emit("pin-saved", count);
     Ok(id)
 }
 

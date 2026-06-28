@@ -51,8 +51,40 @@ export default function Control() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [name, setName] = useState("");
   const [pane, setPane] = useState<"main" | "sessions">("main");
+  const [mini, setMini] = useState(() => {
+    try {
+      return localStorage.getItem("pinshot.mini") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [toast, setToast] = useState<string | null>(null);
   const editing = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const toastTimer = useRef<number | null>(null);
+
+  // Remember collapsed/expanded across restarts.
+  useEffect(() => {
+    try {
+      localStorage.setItem("pinshot.mini", mini ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [mini]);
+
+  // Confirmation toast on every successful paste (button, ⌥⌘V, or tray) — the
+  // backend emits "pin-saved" with the new count.
+  useEffect(() => {
+    const un = listen<number>("pin-saved", (e) => {
+      const n = e.payload;
+      setToast(`✓ Saved to database (${n} pin${n === 1 ? "" : "s"})`);
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+      toastTimer.current = window.setTimeout(() => setToast(null), 2200);
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, []);
 
   // Keep the native window exactly as tall as the panel content (so the bottom
   // hint is never clipped). A ResizeObserver re-fits on every content change —
@@ -61,14 +93,17 @@ export default function Control() {
     const el = rootRef.current;
     if (!el) return;
     const fit = () => {
-      const h = Math.ceil(el.getBoundingClientRect().height);
-      if (h > 0) void resizePin("control", CONTROL_WIDTH, h, false);
+      const r = el.getBoundingClientRect();
+      const h = Math.ceil(r.height);
+      // Expanded: fixed width. Mini: shrink the window to the bar's content.
+      const w = mini ? Math.max(120, Math.ceil(r.width)) : CONTROL_WIDTH;
+      if (h > 0) void resizePin("control", w, h, false);
     };
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [mini]);
 
   useEffect(() => {
     void getDeckSummary().then((s) => s && setDeck(s));
@@ -139,10 +174,15 @@ export default function Control() {
     if (active && n && n !== active.name) void renameSession(active.id, n);
   }
 
+  const toastEl = toast ? <div className="toast">{toast}</div> : null;
+
   const titlebar = (
     <div className="titlebar">
       <span className="brand">📌 PinShot</span>
       <div className="titlebtns">
+        <button className="ic" title="Collapse to mini bar" onClick={() => setMini(true)}>
+          ⊟
+        </button>
         <button className="ic" title="Hide (⌥⌘P)" onClick={() => void toggleControl()}>
           –
         </button>
@@ -153,11 +193,45 @@ export default function Control() {
     </div>
   );
 
+  // --- Collapsed mini bar: just the two most-used actions, smaller, same colors.
+  if (mini) {
+    return (
+      <div className="control mini" ref={rootRef} onMouseDown={onDragStart}>
+        {toastEl}
+        <div className="mini-row">
+          <span className="mini-grip" title="PinShot — drag to move">
+            📌
+          </span>
+          <button
+            className="btn-paste mini-btn"
+            title="Paste a new pin (⌥⌘V)"
+            onClick={() => void createPin()}
+          >
+            📷 Paste
+          </button>
+          {deck.count > 0 && (
+            <button
+              className={`btn-visibility mini-btn${deck.revealed ? "" : " off"}`}
+              title={deck.revealed ? "Hide pins" : "Show pins"}
+              onClick={() => (deck.revealed ? void hidePins() : void revealPins())}
+            >
+              {deck.revealed ? "🙈" : `👁 ${deck.count}`}
+            </button>
+          )}
+          <button className="ic" title="Expand panel" onClick={() => setMini(false)}>
+            ⤢
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // --- Sessions pane: a second "page" (no native popup — that doesn't render in
   // a transparent non-activating panel). Pick a session to switch to it. --------
   if (pane === "sessions") {
     return (
       <div className="control" ref={rootRef} onMouseDown={onDragStart}>
+        {toastEl}
         {titlebar}
         <div className="pane-head">
           <span className="pane-title">Sessions</span>
@@ -206,6 +280,7 @@ export default function Control() {
   // --- Main pane ---------------------------------------------------------------
   return (
     <div className="control" ref={rootRef} onMouseDown={onDragStart}>
+      {toastEl}
       {titlebar}
 
       {/* Session bar: open the list to switch; rename the active one inline.

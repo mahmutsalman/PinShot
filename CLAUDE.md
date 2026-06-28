@@ -70,6 +70,15 @@ on it.
 - macOS: clicking the **Dock icon** (handled via `RunEvent::Reopen`) re-shows the
   control panel in place; ⌥⌘P and Dock both reappear it where you left it (panels
   retain their frame — we no longer force it back to the top-right corner).
+- **Color-coded actions**: cyan = Paste (chunky square, the only cyan), violet =
+  Show/Hide pins (outline when hidden), red = Close all (destructive). Mode
+  toggle uses a neutral highlight so cyan stays unique to Paste.
+- **Collapsed mini bar** (⊟ in titlebar, persisted in `localStorage` `pinshot.mini`):
+  shrinks the panel to just a small Paste + Show/Hide button (same colors) + a grip
+  and ⤢ expand. The control window auto-sizes to the mini content (width too).
+- **Save toast**: `create_pin` emits a `pin-saved` event (count) after a
+  successful insert; the control panel shows a green "✓ Saved to database (N)"
+  toast for ~2.2s. Covers paste via button, ⌥⌘V, and tray — works in mini too.
 - **Show all** = every image visible at once at its saved position. **Single** =
   one **fixed viewer rectangle** (a single window, ~60% of the monitor, centered
   first time, position persisted via `single_pos`, size = `Deck.single_size`
