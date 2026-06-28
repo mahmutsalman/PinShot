@@ -44,6 +44,9 @@ export default function Pin() {
   const [opacity, setOpacity] = useState(1);
   const [collapsed, setCollapsed] = useState(false);
   const [clickThrough, setClickThrough] = useState(false);
+  // Toolbar is hidden by default (it covered the image) — revealed by the
+  // top-right ⚙ toggle instead of on hover.
+  const [showTools, setShowTools] = useState(false);
   const idRef = useRef<number | null>(null);
 
   // Receive this window's view (render / cycle / replace) and on (re)mount.
@@ -160,6 +163,15 @@ export default function Pin() {
     <div className="pin" onMouseDown={onDragStart} onWheel={onWheel}>
       <img src={view.dataUrl} alt="pinned" style={{ opacity }} draggable={false} />
 
+      {/* Top-right toggle: reveal/hide the toolbar so it doesn't cover content. */}
+      <button
+        className={`tools-toggle${showTools ? " on" : ""}`}
+        title={showTools ? "Hide controls" : "Show controls"}
+        onClick={() => setShowTools((v) => !v)}
+      >
+        ⚙
+      </button>
+
       {single && view.total > 1 && (
         <>
           <button className="nav prev" title="Previous (← or click)" onClick={() => void deckStep(-1)}>
@@ -171,7 +183,7 @@ export default function Pin() {
         </>
       )}
 
-      <div className="toolbar">
+      <div className={`toolbar${showTools ? " open" : ""}`}>
         {single && <span className="count">{view.index} / {view.total}</span>}
         <button className="ic" title="Collapse" onClick={toggleCollapsed}>
           ⤡

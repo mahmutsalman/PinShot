@@ -83,8 +83,10 @@ on it.
     because `RawNSPanel::show()` resets first-responder and would otherwise kill
     the NEXT arrow press. A cycle only happens when a focused PinShot window got
     the key, so re-asserting never steals focus unprompted.
-- Per pin (hover toolbar): collapse, zoom −/%/+, opacity slider, replace (⟳ =
-  re-paste clipboard), click-through (👆), close. Scroll over a pin = zoom.
+- Per pin: a top-right **⚙ toggle** reveals/hides the toolbar (it used to show on
+  hover, which covered the image). Toolbar: collapse, zoom −/%/+, opacity slider,
+  replace (⟳ = re-paste clipboard), click-through (👆), close. The ⚙ is subtle by
+  default, brighter on hover, accent when open. Scroll over a pin = zoom.
 
 ## Conventions
 
