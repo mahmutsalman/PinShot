@@ -75,6 +75,7 @@ export const renameSession = (id: number, name: string) =>
   quiet("rename_session", { id, name });
 export const deleteSession = (id: number) => quiet("delete_session", { id });
 export const revealPins = () => quiet("reveal_pins");
+export const hidePins = () => quiet("hide_pins");
 
 // per-window / per-image
 export const getPinView = (label: string) =>

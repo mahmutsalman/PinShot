@@ -1132,11 +1132,29 @@ pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
     emit_sessions(&app, &deck);
 }
 
-/// Show the pins for the loaded session (used after a "launch quiet" startup).
+/// Show the pins for the loaded session (used after a "launch quiet" startup,
+/// or the Show/Hide toggle).
 #[tauri::command]
 pub fn reveal_pins(app: AppHandle, store: State<PinStore>) {
     let mut deck = store.0.lock().unwrap();
     render(&app, &mut deck);
+}
+
+/// Hide every pin window WITHOUT clearing the deck or the session — the images
+/// (and their saved state) stay; only the windows go away. `revealed` flips to
+/// false so the control panel shows "Show pins" again.
+#[tauri::command]
+pub fn hide_pins(app: AppHandle, store: State<PinStore>) {
+    let mut deck = store.0.lock().unwrap();
+    deck.revealed = false;
+    for label in PIN_LABELS {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_ignore_cursor_events(false);
+            hide(&app, &window, label);
+        }
+    }
+    deck.assign.clear();
+    emit_summary(&app, &deck);
 }
 
 // --- control window ----------------------------------------------------------

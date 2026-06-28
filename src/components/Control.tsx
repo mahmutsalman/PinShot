@@ -18,6 +18,7 @@ import {
   renameSession,
   deleteSession,
   revealPins,
+  hidePins,
 } from "../lib/ipc";
 
 /** Drag the panel except from real controls. Any primary click first grabs
@@ -43,6 +44,7 @@ export default function Control() {
   const [deck, setDeck] = useState<DeckSummary>(EMPTY);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [name, setName] = useState("");
+  const [pane, setPane] = useState<"main" | "sessions">("main");
   const editing = useRef(false);
 
   useEffect(() => {
@@ -68,9 +70,8 @@ export default function Control() {
   const single = deck.mode === "single";
 
   // ← / → cycle pins while the control panel is focused (Single mode, >1 pin).
-  // Scoped to this focused window → never captures arrow keys from other apps.
   useEffect(() => {
-    if (!single || deck.count <= 1) return;
+    if (pane !== "main" || !single || deck.count <= 1) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowLeft") {
         e.preventDefault();
@@ -82,7 +83,7 @@ export default function Control() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [single, deck.count]);
+  }, [pane, single, deck.count]);
 
   function commitName() {
     editing.current = false;
@@ -90,49 +91,93 @@ export default function Control() {
     if (active && n && n !== active.name) void renameSession(active.id, n);
   }
 
-  return (
-    <div className="control" onMouseDown={onDragStart}>
-      <div className="titlebar">
-        <span className="brand">📌 PinShot</span>
-        <div className="titlebtns">
-          <button className="ic" title="Hide (⌥⌘P)" onClick={() => void toggleControl()}>
-            –
-          </button>
-          <button className="ic" title="Quit" onClick={() => void quitApp()}>
+  const titlebar = (
+    <div className="titlebar">
+      <span className="brand">📌 PinShot</span>
+      <div className="titlebtns">
+        <button className="ic" title="Hide (⌥⌘P)" onClick={() => void toggleControl()}>
+          –
+        </button>
+        <button className="ic" title="Quit" onClick={() => void quitApp()}>
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+
+  // --- Sessions pane: a second "page" (no native popup — that doesn't render in
+  // a transparent non-activating panel). Pick a session to switch to it. --------
+  if (pane === "sessions") {
+    return (
+      <div className="control" onMouseDown={onDragStart}>
+        {titlebar}
+        <div className="pane-head">
+          <span className="pane-title">Sessions</span>
+          <button className="ic" title="Back" onClick={() => setPane("main")}>
             ✕
           </button>
         </div>
-      </div>
-
-      {/* Sessions: pasted images persist per session in SQLite. Switch / rename
-          / new / delete. Switching shows that session's pins immediately. */}
-      <div className="session-row">
-        <select
-          className="session-select"
-          title="Switch session"
-          value={active?.id ?? ""}
-          onChange={(e) => void switchSession(Number(e.target.value))}
-        >
+        <div className="session-list">
           {sessions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.count})
-            </option>
+            <div key={s.id} className={`session-item${s.active ? " on" : ""}`}>
+              <button
+                className="session-pick"
+                title={`Switch to ${s.name}`}
+                onClick={() => {
+                  void switchSession(s.id);
+                  setPane("main");
+                }}
+              >
+                <span className="session-itemname">{s.name}</span>
+                <span className="session-itemcount">{s.count}</span>
+              </button>
+              <button
+                className="ic"
+                title="Delete session"
+                disabled={sessions.length <= 1}
+                onClick={() => void deleteSession(s.id)}
+              >
+                🗑
+              </button>
+            </div>
           ))}
-        </select>
+        </div>
+        <button
+          className="primary"
+          onClick={() => {
+            void createSession(`Session ${sessions.length + 1}`);
+            setPane("main");
+          }}
+        >
+          ＋ New session
+        </button>
+      </div>
+    );
+  }
+
+  // --- Main pane ---------------------------------------------------------------
+  return (
+    <div className="control" onMouseDown={onDragStart}>
+      {titlebar}
+
+      {/* Session bar: open the list to switch; rename the active one inline.
+          Images persist per session in SQLite. */}
+      <div className="session-row">
+        <button
+          className="session-open"
+          title="Switch session"
+          onClick={() => setPane("sessions")}
+        >
+          <span className="session-openname">{active?.name ?? "Session"}</span>
+          <span className="session-itemcount">{active?.count ?? 0}</span>
+          <span className="caret">▾</span>
+        </button>
         <button
           className="ic"
           title="New session"
           onClick={() => void createSession(`Session ${sessions.length + 1}`)}
         >
           ＋
-        </button>
-        <button
-          className="ic"
-          title="Delete this session"
-          disabled={sessions.length <= 1}
-          onClick={() => active && void deleteSession(active.id)}
-        >
-          🗑
         </button>
       </div>
       <input
@@ -184,9 +229,13 @@ export default function Control() {
         </p>
       )}
 
-      {deck.count > 0 && !deck.revealed && (
-        <button className="primary" onClick={() => void revealPins()}>
-          👁 Show {deck.count} pin{deck.count === 1 ? "" : "s"}
+      {/* Show / hide the pasted images without losing them. */}
+      {deck.count > 0 && (
+        <button
+          className={deck.revealed ? "ghost" : "primary"}
+          onClick={() => (deck.revealed ? void hidePins() : void revealPins())}
+        >
+          {deck.revealed ? "🙈 Hide pins" : `👁 Show ${deck.count} pin${deck.count === 1 ? "" : "s"}`}
         </button>
       )}
 
