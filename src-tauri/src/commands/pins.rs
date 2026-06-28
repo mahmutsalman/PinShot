@@ -79,9 +79,6 @@ struct Deck {
     single_size: Option<(f64, f64)>,
     /// window label -> image id currently shown there (rebuilt every render).
     assign: HashMap<String, u64>,
-    /// Fallback id source if a DB insert ever fails (normally image ids ARE the
-    /// SQLite rowid, so the frontend id and the DB row stay 1:1).
-    next_id: u64,
     /// The session currently loaded into this deck (SQLite `sessions.id`).
     active_session: i64,
     /// Whether the pins have been shown this run. On launch we load the active
@@ -99,7 +96,6 @@ impl Default for Deck {
             single_pos: None,
             single_size: None,
             assign: HashMap::new(),
-            next_id: 1,
             active_session: 0,
             revealed: false,
         }
@@ -256,6 +252,20 @@ fn db_set_active(conn: &Connection, id: i64) {
          ON CONFLICT(k) DO UPDATE SET v = excluded.v",
         params![id.to_string()],
     );
+}
+
+/// Return a guaranteed-valid session id to write into: the candidate if it
+/// still exists, otherwise heal via [`db_active_or_init`]. Prevents pasting an
+/// image against a stale/deleted session id (which would fail or orphan it).
+fn ensure_active_session(conn: &Connection, candidate: i64) -> i64 {
+    if candidate > 0
+        && conn
+            .query_row("SELECT 1 FROM sessions WHERE id=?1", params![candidate], |_| Ok(()))
+            .is_ok()
+    {
+        return candidate;
+    }
+    db_active_or_init(conn)
 }
 
 /// Return the active session id, healing a missing/stale pointer: prefer the
@@ -861,15 +871,20 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
     };
 
     // Persist the new image; its DB rowid becomes the deck id (1:1 mapping).
-    let session_id = deck.active_session;
+    // Heal the active session first so the pin always lands in a real session
+    // (and re-assert it as active so app_state can never drift from where the
+    // images actually go). If the write fails, FAIL LOUDLY — never keep an
+    // unpersisted in-memory image that would silently vanish on switch/restart.
+    let session_id = with_db(app, |c| ensure_active_session(c, deck.active_session));
+    deck.active_session = session_id;
     let id = match with_db(app, |c| {
+        db_set_active(c, session_id);
         db_insert_image(c, session_id, &payload, None, 1.0, 1.0, false, false)
     }) {
         Ok(rowid) => rowid as u64,
         Err(e) => {
             log::error!("pins: db_insert_image failed: {e}");
-            deck.next_id += 1;
-            deck.next_id
+            return Err(format!("Could not save the pin to the database: {e}"));
         }
     };
 
@@ -1193,6 +1208,9 @@ pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
     let mut deck = store.0.lock().unwrap();
     let was_active = deck.active_session == id;
     with_db(&app, |c| {
+        // FK cascade is off — delete the session's images explicitly so they
+        // don't linger as orphans.
+        db_delete_session_images(c, id);
         let _ = c.execute("DELETE FROM sessions WHERE id=?1", params![id]);
     });
     if was_active {

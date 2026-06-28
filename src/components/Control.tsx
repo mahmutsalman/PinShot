@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { listen } from "@tauri-apps/api/event";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   type DeckSummary,
   type SessionInfo,
@@ -80,7 +81,32 @@ export default function Control() {
     };
   }, []);
 
-  const active = sessions.find((s) => s.active);
+  // Trust the live deck summary's sessionId for "which session is active" (it's
+  // always fresh), falling back to the list's flag — so the panel can never show
+  // the wrong active session even if the list is momentarily stale.
+  const active = sessions.find((s) => s.id === deck.sessionId) ?? sessions.find((s) => s.active);
+
+  // Whenever the active session changes, refresh the list so names/counts and
+  // the active flag stay in sync with the backend.
+  useEffect(() => {
+    void listSessions().then(setSessions);
+  }, [deck.sessionId]);
+
+  async function confirmCloseAll() {
+    const ok = await ask(
+      `Close all ${deck.count} pin${deck.count === 1 ? "" : "s"} in "${active?.name ?? "this session"}"? This removes the images from the session.`,
+      { title: "PinShot", kind: "warning" }
+    );
+    if (ok) void closeAllPins();
+  }
+
+  async function confirmDeleteSession(s: SessionInfo) {
+    const ok = await ask(
+      `Delete session "${s.name}" and its ${s.count} image${s.count === 1 ? "" : "s"}? This can't be undone.`,
+      { title: "PinShot", kind: "warning" }
+    );
+    if (ok) void deleteSession(s.id);
+  }
 
   // Keep the rename field synced with the active session — but not while the
   // user is actively typing in it.
@@ -157,7 +183,7 @@ export default function Control() {
                 className="ic"
                 title="Delete session"
                 disabled={sessions.length <= 1}
-                onClick={() => void deleteSession(s.id)}
+                onClick={() => void confirmDeleteSession(s)}
               >
                 🗑
               </button>
@@ -270,7 +296,7 @@ export default function Control() {
       )}
 
       {deck.count > 0 && (
-        <button className="ghost" onClick={() => void closeAllPins()}>
+        <button className="ghost" onClick={() => void confirmCloseAll()}>
           Close all ({deck.count})
         </button>
       )}
