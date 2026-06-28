@@ -25,6 +25,7 @@ import {
 } from "../lib/ipc";
 
 const CONTROL_WIDTH = 232;
+const MINI_WIDTH = 220;
 
 /** Drag the panel except from real controls. Any primary click first grabs
  *  keyboard focus so ← / → reach the panel. */
@@ -93,10 +94,10 @@ export default function Control() {
     const el = rootRef.current;
     if (!el) return;
     const fit = () => {
-      const r = el.getBoundingClientRect();
-      const h = Math.ceil(r.height);
-      // Expanded: fixed width. Mini: shrink the window to the bar's content.
-      const w = mini ? Math.max(120, Math.ceil(r.width)) : CONTROL_WIDTH;
+      // Fixed width per mode (content flexes inside it); measure only height so
+      // the window never clips the bar. Use scrollHeight to capture full content.
+      const w = mini ? MINI_WIDTH : CONTROL_WIDTH;
+      const h = Math.max(el.scrollHeight, Math.ceil(el.getBoundingClientRect().height));
       if (h > 0) void resizePin("control", w, h, false);
     };
     fit();

@@ -262,9 +262,7 @@ kbd {
 
 /* Collapsed "mini bar": just the two most-used actions, smaller, same colors. */
 .control.mini {
-  width: fit-content;
-  max-width: 260px;
-  padding: 7px 8px;
+  padding: 8px;
 }
 .control.mini .toast {
   margin-bottom: 6px;
