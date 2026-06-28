@@ -36,6 +36,8 @@ export interface SessionInfo {
   name: string;
   count: number;
   active: boolean;
+  /** Unix seconds of last use (paste/switch) — for the mini-bar recent list. */
+  lastUsed: number;
 }
 
 /** Run a command, surfacing any error in a native dialog (alerts are no-ops in

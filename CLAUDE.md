@@ -74,8 +74,14 @@ on it.
   Show/Hide pins (outline when hidden), red = Close all (destructive). Mode
   toggle uses a neutral highlight so cyan stays unique to Paste.
 - **Collapsed mini bar** (⊟ in titlebar, persisted in `localStorage` `pinshot.mini`):
-  shrinks the panel to just a small Paste + Show/Hide button (same colors) + a grip
-  and ⤢ expand. The control window auto-sizes to the mini content (width too).
+  small Paste + Show/Hide + grip + ⤢ expand, plus a row of the **3 most-recently-used
+  sessions** as quick-switch chips (click → switch, then Paste lands there). Recency
+  = `sessions.last_used` (bumped on paste/switch; migrated via `ALTER TABLE`). Mini
+  window uses a fixed width (220) with content flexing; height measured.
+- **Visibility is global + sticky across sessions.** `revealed` is one deck-level
+  flag; `switch_session`/`create_session`/`delete_session` go through
+  `render_or_summary`, so hiding pins stays hidden when you switch sessions (and
+  launch is always quiet, so hidden persists across restart).
 - **Save toast**: `create_pin` emits a `pin-saved` event (count) after a
   successful insert; the control panel shows a green "✓ Saved to database (N)"
   toast for ~2.2s. Covers paste via button, ⌥⌘V, and tray — works in mini too.

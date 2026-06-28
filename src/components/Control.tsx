@@ -200,7 +200,11 @@ export default function Control() {
     </div>
   );
 
-  // --- Collapsed mini bar: just the two most-used actions, smaller, same colors.
+  // Most-recently-used sessions (for the mini-bar quick switch).
+  const recent = [...sessions].sort((a, b) => b.lastUsed - a.lastUsed).slice(0, 3);
+
+  // --- Collapsed mini bar: the two most-used actions + recent-session quick
+  // switch, smaller, same colors.
   if (mini) {
     return (
       <div className="control mini" ref={rootRef} onMouseDown={onDragStart}>
@@ -229,6 +233,22 @@ export default function Control() {
             ⤢
           </button>
         </div>
+
+        {/* Recent sessions — click to switch, then Paste lands in that one. */}
+        {recent.length > 1 && (
+          <div className="mini-sessions">
+            {recent.map((s) => (
+              <button
+                key={s.id}
+                className={`mini-chip${s.id === deck.sessionId ? " on" : ""}`}
+                title={`Switch to "${s.name}" (${s.count} pins)`}
+                onClick={() => void switchSession(s.id)}
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

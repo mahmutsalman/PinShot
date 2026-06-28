@@ -155,6 +155,8 @@ pub struct SessionInfo {
     name: String,
     count: usize,
     active: bool,
+    #[serde(rename = "lastUsed")]
+    last_used: i64,
 }
 
 /// SQLite handle (managed state). Opened once in setup; see [`init_store`].
@@ -195,6 +197,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  last_used INTEGER,
   mode TEXT NOT NULL DEFAULT 'all',
   current_idx INTEGER NOT NULL DEFAULT 0,
   single_pos_x INTEGER,
@@ -235,15 +238,31 @@ pub fn open_db(app: &AppHandle) -> Connection {
     let _ = std::fs::create_dir_all(&dir);
     let conn = Connection::open(dir.join("pinshot.sqlite3")).expect("open pinshot.sqlite3");
     conn.execute_batch(SCHEMA).expect("init schema");
+    // Migration for DBs created before `last_used` existed (errors if the column
+    // is already there — ignored). Seed it from created_at so ordering works.
+    let _ = conn.execute("ALTER TABLE sessions ADD COLUMN last_used INTEGER", []);
+    let _ = conn.execute(
+        "UPDATE sessions SET last_used = created_at WHERE last_used IS NULL",
+        [],
+    );
     conn
 }
 
 fn db_create_session(conn: &Connection, name: &str) -> i64 {
+    let now = now_ts();
     let _ = conn.execute(
-        "INSERT INTO sessions (name, created_at) VALUES (?1, ?2)",
-        params![name, now_ts()],
+        "INSERT INTO sessions (name, created_at, last_used) VALUES (?1, ?2, ?2)",
+        params![name, now],
     );
     conn.last_insert_rowid()
+}
+
+/// Bump a session's recency (used by paste / switch) for the mini-bar list.
+fn db_touch_session(conn: &Connection, id: i64) {
+    let _ = conn.execute(
+        "UPDATE sessions SET last_used=?1 WHERE id=?2",
+        params![now_ts(), id],
+    );
 }
 
 fn db_set_active(conn: &Connection, id: i64) {
@@ -432,7 +451,7 @@ fn db_load_session(conn: &Connection, session_id: i64) -> (Vec<DeckImage>, Mode,
 fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
     let mut out = Vec::new();
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT s.id, s.name, COUNT(i.id)
+        "SELECT s.id, s.name, COUNT(i.id), COALESCE(s.last_used, s.created_at, 0)
          FROM sessions s LEFT JOIN images i ON i.session_id = s.id
          GROUP BY s.id ORDER BY s.id ASC",
     ) {
@@ -443,6 +462,7 @@ fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
                 name: r.get(1)?,
                 count: r.get::<_, i64>(2)? as usize,
                 active: id == active,
+                last_used: r.get(3)?,
             })
         }) {
             out.extend(rows.flatten());
@@ -887,6 +907,7 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
     deck.active_session = session_id;
     let id = match with_db(app, |c| {
         db_set_active(c, session_id);
+        db_touch_session(c, session_id);
         db_insert_image(c, session_id, &payload, None, 1.0, 1.0, false, false)
     }) {
         Ok(rowid) => rowid as u64,
@@ -1178,7 +1199,7 @@ pub fn create_session(app: AppHandle, store: State<PinStore>, name: String) -> i
     deck.single_pos = None;
     deck.mode = Mode::All;
     deck.active_session = id;
-    render(&app, &mut deck);
+    render_or_summary(&app, &mut deck);
     emit_sessions(&app, &deck);
     id
 }
@@ -1193,6 +1214,7 @@ pub fn switch_session(app: AppHandle, store: State<PinStore>, id: i64) {
     }
     let (images, mode, current, single_pos) = with_db(&app, |c| {
         db_set_active(c, id);
+        db_touch_session(c, id);
         db_load_session(c, id)
     });
     deck.images = images;
@@ -1200,7 +1222,9 @@ pub fn switch_session(app: AppHandle, store: State<PinStore>, id: i64) {
     deck.current = current;
     deck.single_pos = single_pos;
     deck.active_session = id;
-    render(&app, &mut deck);
+    // Respect the global visibility: if pins are hidden, switching loads the new
+    // session but keeps it hidden (the hidden state applies across all sessions).
+    render_or_summary(&app, &mut deck);
     emit_sessions(&app, &deck);
 }
 
@@ -1248,7 +1272,7 @@ pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
         deck.current = current;
         deck.single_pos = single_pos;
         deck.active_session = active;
-        render(&app, &mut deck);
+        render_or_summary(&app, &mut deck);
     }
     emit_sessions(&app, &deck);
 }
