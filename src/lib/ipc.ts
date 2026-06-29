@@ -80,6 +80,9 @@ export const setMode = (all: boolean) => quiet("set_mode", { all });
 export const deckStep = (delta: number) => quiet("deck_step", { delta });
 /** Make this window the key window so ← / → reach it (deterministic focus). */
 export const focusPin = (label: string) => quiet("focus_pin", { label });
+/** Focus for TEXT EDITING — activates the app so a note's field takes the caret
+ *  reliably (WKWebView text input only works while the app is active). */
+export const focusPinEdit = (label: string) => quiet("focus_pin_edit", { label });
 export const getDeckSummary = () =>
   invoke<DeckSummary>("get_deck_summary").catch(() => null);
 

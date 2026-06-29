@@ -20,6 +20,7 @@ import {
   setTextEditing,
   deckStep,
   focusPin,
+  focusPinEdit,
   hidePins,
 } from "../lib/ipc";
 
@@ -230,13 +231,13 @@ export default function Pin() {
   // the window key, so the textarea's own focus event may never fire. Making the
   // panel key + webview first-responder here lets the same click land the caret.
   function onNotePointerDown() {
-    void focusPin(label);
+    void focusPinEdit(label);
   }
 
   // Tell the backend a text field is focused so the native key monitor stops
   // grabbing ← / → / ESC (otherwise they'd cycle/hide instead of editing).
   function onNoteFocus() {
-    void focusPin(label);
+    void focusPinEdit(label);
     void setTextEditing(true);
   }
   function onNoteBlur() {

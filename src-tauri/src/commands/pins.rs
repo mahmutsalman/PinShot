@@ -938,6 +938,60 @@ fn focus_panel(app: &AppHandle, label: &str) {
     }
 }
 
+/// Like [`focus_panel`], but ALSO **activates the app** first. A WKWebView only
+/// reliably accepts keyboard text input / shows a caret when its app is the
+/// active one — clicking a *background* non-activating panel makes it key but the
+/// web text field still won't take the caret (the "works at first, then stops
+/// once another app is active" bug). This is used ONLY for note editing; plain
+/// pin clicks keep the non-activating behavior. Activating an app whose only
+/// windows are all-Spaces panels brings keyboard focus here without leaving the
+/// current (even fullscreen) Space.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // cocoa `id` alias + activateIgnoringOtherApps; intentional
+fn focus_panel_edit(app: &AppHandle, label: &str) {
+    if let Some(p) = panel(app, label) {
+        let _ = app.run_on_main_thread(move || {
+            use tauri_nspanel::cocoa::base::id;
+            use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+            unsafe {
+                let ns_app: id = msg_send![class!(NSApplication), sharedApplication];
+                let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+            }
+            let content: id = p.content_view();
+            let webview: id = unsafe {
+                let subviews: id = msg_send![content, subviews];
+                let count: usize = msg_send![subviews, count];
+                if count > 0 {
+                    msg_send![subviews, objectAtIndex: 0usize]
+                } else {
+                    content
+                }
+            };
+            p.make_key_and_order_front(None);
+            p.make_first_responder(Some(webview));
+            p.make_key_window();
+        });
+        return;
+    }
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focus_panel_edit(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.set_focus();
+    }
+}
+
+/// Focus a pin for TEXT EDITING (activates the app so a note's WKWebView field
+/// reliably takes the caret). Called from the note's mousedown/focus.
+#[tauri::command]
+pub fn focus_pin_edit(app: AppHandle, label: String) {
+    focus_panel_edit(&app, &label);
+}
+
 /// Robust arrow-key / ESC navigation for the single-mode viewer.
 ///
 /// THE PROBLEM: getting hardware keys into a WKWebView that lives in a

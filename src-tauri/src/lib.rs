@@ -2,7 +2,7 @@ mod commands;
 
 use commands::{
     arrange_pins, close_all_pins, close_image, create_pin, create_session, deck_step,
-    delete_session, focus_pin,
+    delete_session, focus_pin, focus_pin_edit,
     get_deck_summary, get_pin_view, list_sessions, quit_app, rename_session, replace_image,
     hide_pins, resize_pin, reveal_pins, set_image_click_through, set_image_collapsed,
     set_image_color, set_image_favorite, set_image_note, set_image_opacity,
@@ -162,6 +162,7 @@ pub fn run() {
             set_mode,
             deck_step,
             focus_pin,
+            focus_pin_edit,
             list_sessions,
             create_session,
             switch_session,
