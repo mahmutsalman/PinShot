@@ -51,6 +51,10 @@ struct DeckImage {
     click_through: bool,
     /// Starred for the cross-session Favorites view.
     favorite: bool,
+    /// Free-text note attached to this image (persisted, per-image).
+    note: String,
+    /// Color tag (a hex string from the preset palette, or "" for none).
+    color: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -87,6 +91,10 @@ struct Deck {
     /// holds the cross-session aggregation of favorited images (changes how
     /// close / favorite behave: they remove-from-favorites, not destroy).
     favorites_view: bool,
+    /// True while a web text field (e.g. a note) is focused. Tells the native
+    /// key monitor to pass ← / → / ESC through to the DOM instead of hijacking
+    /// them for carousel nav, so the note can be edited normally.
+    text_editing: bool,
     /// Whether the pins have been shown this run. On launch we load the active
     /// session into memory but keep pins hidden ("launch quiet") until the user
     /// reveals them or pastes; switching sessions reveals immediately.
@@ -104,6 +112,7 @@ impl Default for Deck {
             assign: HashMap::new(),
             active_session: 0,
             favorites_view: false,
+            text_editing: false,
             revealed: false,
         }
     }
@@ -141,6 +150,8 @@ pub struct PinView {
     /// This window belongs to the cross-session Favorites view.
     #[serde(rename = "favoritesView")]
     favorites_view: bool,
+    note: String,
+    color: String,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -197,6 +208,8 @@ fn make_view(img: &DeckImage, index: usize, total: usize, mode: Mode, favorites_
         click_through: img.click_through,
         favorite: img.favorite,
         favorites_view,
+        note: img.note.clone(),
+        color: img.color.clone(),
     }
 }
 
@@ -239,7 +252,9 @@ CREATE TABLE IF NOT EXISTS images (
   opacity REAL NOT NULL,
   collapsed INTEGER NOT NULL,
   click_through INTEGER NOT NULL,
-  favorite INTEGER NOT NULL DEFAULT 0
+  favorite INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS app_state (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 ";
@@ -281,6 +296,15 @@ pub fn open_db(app: &AppHandle) -> Connection {
     );
     let _ = conn.execute(
         "ALTER TABLE sessions ADD COLUMN is_favorites INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    // Per-image text note + color tag (migrated for pre-existing DBs).
+    let _ = conn.execute(
+        "ALTER TABLE images ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE images ADD COLUMN color TEXT NOT NULL DEFAULT ''",
         [],
     );
     conn
@@ -472,6 +496,14 @@ fn db_update_image_click_through(conn: &Connection, id: u64, ct: bool) {
     let _ = conn.execute("UPDATE images SET click_through=?1 WHERE id=?2", params![ct as i64, id as i64]);
 }
 
+fn db_update_image_note(conn: &Connection, id: u64, note: &str) {
+    let _ = conn.execute("UPDATE images SET note=?1 WHERE id=?2", params![note, id as i64]);
+}
+
+fn db_update_image_color(conn: &Connection, id: u64, color: &str) {
+    let _ = conn.execute("UPDATE images SET color=?1 WHERE id=?2", params![color, id as i64]);
+}
+
 fn db_delete_image(conn: &Connection, id: u64) {
     let _ = conn.execute("DELETE FROM images WHERE id=?1", params![id as i64]);
 }
@@ -513,6 +545,8 @@ fn row_to_deck_image(r: &rusqlite::Row) -> rusqlite::Result<DeckImage> {
         collapsed: r.get::<_, i64>(10)? != 0,
         click_through: r.get::<_, i64>(11)? != 0,
         favorite: r.get::<_, i64>(12)? != 0,
+        note: r.get(13)?,
+        color: r.get(14)?,
     })
 }
 
@@ -521,7 +555,7 @@ fn row_to_deck_image(r: &rusqlite::Row) -> rusqlite::Result<DeckImage> {
 /// aggregates every favorited image across ALL sessions.
 fn db_load_session(conn: &Connection, session_id: i64) -> (Vec<DeckImage>, Mode, usize, Option<(i32, i32)>) {
     const COLS: &str =
-        "id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through, favorite";
+        "id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through, favorite, note, color";
     let mut images = Vec::new();
     if is_favorites_session(conn, session_id) {
         let sql = format!("SELECT {COLS} FROM images WHERE favorite=1 ORDER BY id ASC");
@@ -913,11 +947,15 @@ pub fn install_key_monitor(app: &AppHandle) {
         }
         // Snapshot deck state, then RELEASE the lock before re-entering commands
         // (the mutex isn't reentrant; deck_step_internal locks it again).
-        let (single, revealed, count) = {
+        let (single, revealed, count, text_editing) = {
             let store = app_handle.state::<PinStore>();
             let deck = store.0.lock().unwrap();
-            (deck.mode == Mode::Single, deck.revealed, deck.images.len())
+            (deck.mode == Mode::Single, deck.revealed, deck.images.len(), deck.text_editing)
         };
+        // A note (or any web text field) is focused — let it have arrows + ESC.
+        if text_editing {
+            return event;
+        }
         if !revealed {
             return event;
         }
@@ -1134,6 +1172,8 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
         collapsed: false,
         click_through: false,
         favorite: fav,
+        note: String::new(),
+        color: String::new(),
     });
     deck.current = deck.images.len() - 1;
     let (mode, current, single_pos) = (deck.mode, deck.current, deck.single_pos);
@@ -1355,6 +1395,35 @@ pub fn set_image_click_through(app: AppHandle, store: State<PinStore>, id: u64, 
         with_db(&app, |c| db_update_image_click_through(c, id, ignore));
     }
     render(&app, &mut deck);
+}
+
+/// Persist an image's text note (store-only, no re-render — the editing window
+/// already shows the live text optimistically; no other window shows this id).
+#[tauri::command]
+pub fn set_image_note(app: AppHandle, store: State<PinStore>, id: u64, note: String) {
+    let mut deck = store.0.lock().unwrap();
+    if let Some(i) = find_index(&deck, id) {
+        deck.images[i].note = note.clone();
+        with_db(&app, |c| db_update_image_note(c, id, &note));
+    }
+}
+
+/// Persist an image's color tag (a preset hex string, or "" for none).
+/// Store-only — the editing window applies the frame/dot from its local state.
+#[tauri::command]
+pub fn set_image_color(app: AppHandle, store: State<PinStore>, id: u64, color: String) {
+    let mut deck = store.0.lock().unwrap();
+    if let Some(i) = find_index(&deck, id) {
+        deck.images[i].color = color.clone();
+        with_db(&app, |c| db_update_image_color(c, id, &color));
+    }
+}
+
+/// Toggle the "a web text field is focused" flag so the native key monitor
+/// stops hijacking ← / → / ESC while the user is typing a note.
+#[tauri::command]
+pub fn set_text_editing(store: State<PinStore>, editing: bool) {
+    store.0.lock().unwrap().text_editing = editing;
 }
 
 /// Star / unstar an image for the cross-session Favorites view. Persists the

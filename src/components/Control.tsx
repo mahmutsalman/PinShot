@@ -194,6 +194,9 @@ export default function Control() {
   useEffect(() => {
     const canCycle = pane === "main" && single && deck.count > 1;
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack arrows/ESC while typing in a field (e.g. the session name).
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       if (e.key === "Escape") {
         if (deck.count > 0 && deck.revealed) {
           e.preventDefault();

@@ -80,6 +80,21 @@ on it.
   = `sessions.last_used`, star = `sessions.starred` (both migrated via `ALTER TABLE`;
   star toggled by the ☆/★ button on each row in the sessions pane via
   `set_session_starred`). Mini window: fixed width 248, height = `52 + n*29`.
+- **Per-image notes + color.** Each image carries a persistent `note` (TEXT) and
+  `color` (TEXT, a preset hex tag or "") — columns on `images`, 1:1 with the
+  rowid (no join table). Edited via store-only commands `set_image_note` /
+  `set_image_color` (mirror `set_image_opacity` — no re-render; the editing
+  window shows its own state optimistically and no other window shows that id).
+  UI (`Pin.tsx`): single mode gets a footer `<textarea class=viewer-note>` in
+  the rectangle; all mode gets a bottom caption overlay (`.pin-note`, shown when
+  non-empty or while the ⚙ toolbar is open). Color = a preset **swatch row** in
+  both toolbars → a colored frame (`--pc` inline var on `.pin`/`.pin.viewer`) +
+  a dot. Notes save **debounced (500 ms) + on blur + flushed on image switch**.
+  **Keyboard gotcha:** a focused note must keep ← / → / ESC. The native key
+  monitor would swallow them, so the deck has a `text_editing` flag set via
+  `set_text_editing` on note focus/blur; the monitor passes keys through when
+  it's set. The DOM keydown listeners in `Pin`/`Control` also bail when
+  `e.target` is an INPUT/TEXTAREA, and the drag guards skip `textarea`.
 - **Cross-session Favorites.** Each image has a `favorite` flag (★/☆ button on
   every pin's toolbar — all-mode toolbar, single-mode viewer header, and the
   collapsed chip-bar; `set_image_favorite`). A special, always-present,

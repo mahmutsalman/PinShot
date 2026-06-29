@@ -14,6 +14,9 @@ import {
   setImageCollapsed,
   setImageClickThrough,
   setImageFavorite,
+  setImageNote,
+  setImageColor,
+  setTextEditing,
   deckStep,
   focusPin,
   hidePins,
@@ -21,6 +24,19 @@ import {
 
 const win = getCurrentWebviewWindow();
 const label = win.label;
+
+/** Preset color tags for images (frame + dot). "" = no color. */
+const PALETTE = [
+  "#ef4444", // red
+  "#f59e0b", // amber
+  "#eab308", // yellow
+  "#22c55e", // green
+  "#38bdf8", // sky
+  "#a78bfa", // violet
+  "#ec4899", // pink
+] as const;
+
+const NOTE_SAVE_DELAY = 500; // ms debounce before persisting note edits
 
 const ZOOM_STEP = 1.15;
 const ZOOM_MIN = 0.15;
@@ -36,7 +52,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 function onDragStart(e: React.MouseEvent) {
   if (e.button !== 0) return;
   void focusPin(label);
-  if ((e.target as HTMLElement).closest("button, input")) return;
+  if ((e.target as HTMLElement).closest("button, input, textarea")) return;
   void win.startDragging();
 }
 
@@ -48,6 +64,12 @@ export default function Pin() {
   const [collapsed, setCollapsed] = useState(false);
   const [clickThrough, setClickThrough] = useState(false);
   const [favorite, setFavorite] = useState(false);
+  const [note, setNote] = useState("");
+  const [color, setColor] = useState("");
+  // Debounced note persistence: remember the (id, text) still owed to the DB so
+  // we can flush it on blur / when the shown image changes (never lose an edit).
+  const noteTimer = useRef<number | null>(null);
+  const pendingNote = useRef<{ id: number; text: string } | null>(null);
   // Toolbar is hidden by default (it covered the image) — revealed by the ⚙.
   const [showTools, setShowTools] = useState(false);
   // Single-mode viewer: transient zoom + pan of the image WITHIN the fixed
@@ -76,15 +98,32 @@ export default function Pin() {
     };
   }, []);
 
+  // Persist any note still owed to the DB right now (on blur, image switch, etc.).
+  function flushNote() {
+    if (noteTimer.current) {
+      window.clearTimeout(noteTimer.current);
+      noteTimer.current = null;
+    }
+    const p = pendingNote.current;
+    if (p) {
+      void setImageNote(p.id, p.text);
+      pendingNote.current = null;
+    }
+  }
+
   // Seed local state whenever the shown image changes (cycle / replace / mode).
   // Resetting zoom/pan here is the "reset to fit on switch" behavior.
   useEffect(() => {
     if (!view) return;
+    // Save the previous image's pending note before swapping in the new one.
+    flushNote();
     setScale(view.scale);
     setOpacity(view.opacity);
     setCollapsed(view.collapsed);
     setClickThrough(view.clickThrough);
     setFavorite(view.favorite);
+    setNote(view.note);
+    setColor(view.color);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     idRef.current = view.id;
@@ -110,6 +149,9 @@ export default function Pin() {
     const single = view?.mode === "single";
     const canCycle = single && (view?.total ?? 0) > 1;
     const onKey = (e: KeyboardEvent) => {
+      // Never hijack keys while typing in a note (or any text field).
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         void hidePins();
@@ -169,13 +211,65 @@ export default function Pin() {
     if (view) void setImageFavorite(view.id, next);
   }
 
+  // --- note + color ----------------------------------------------------------
+
+  function onNoteChange(text: string) {
+    setNote(text);
+    if (!view) return;
+    pendingNote.current = { id: view.id, text };
+    if (noteTimer.current) window.clearTimeout(noteTimer.current);
+    noteTimer.current = window.setTimeout(flushNote, NOTE_SAVE_DELAY);
+  }
+
+  // Tell the backend a text field is focused so the native key monitor stops
+  // grabbing ← / → / ESC (otherwise they'd cycle/hide instead of editing).
+  function onNoteFocus() {
+    void focusPin(label);
+    void setTextEditing(true);
+  }
+  function onNoteBlur() {
+    flushNote();
+    void setTextEditing(false);
+  }
+  function onNoteKeyDown(e: React.KeyboardEvent) {
+    e.stopPropagation();
+    if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
+  }
+
+  function chooseColor(c: string) {
+    const next = color === c ? "" : c; // click the active swatch again to clear
+    setColor(next);
+    if (view) void setImageColor(view.id, next);
+  }
+
+  const swatchRow = (
+    <div className="swatch-row" title="Color tag">
+      {PALETTE.map((c) => (
+        <button
+          key={c}
+          className={`swatch${color === c ? " on" : ""}`}
+          style={{ background: c }}
+          title={color === c ? "Clear color" : "Set color"}
+          onClick={() => chooseColor(c)}
+        />
+      ))}
+      <button
+        className={`swatch none${color === "" ? " on" : ""}`}
+        title="No color"
+        onClick={() => chooseColor("")}
+      >
+        ⦸
+      </button>
+    </div>
+  );
+
   // --- single-mode viewer interactions ---------------------------------------
 
   /** Drag the header to MOVE the viewer window. */
   function onHeadDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
     void focusPin(label);
-    if ((e.target as HTMLElement).closest("button, input")) return;
+    if ((e.target as HTMLElement).closest("button, input, textarea")) return;
     void win.startDragging();
   }
 
@@ -183,7 +277,7 @@ export default function Pin() {
   function onBodyDown(e: React.MouseEvent) {
     if (e.button !== 0) return;
     void focusPin(label);
-    if ((e.target as HTMLElement).closest("button, input")) return;
+    if ((e.target as HTMLElement).closest("button, input, textarea")) return;
     panning.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
     const move = (ev: MouseEvent) => {
       const p = panning.current;
@@ -283,8 +377,12 @@ export default function Pin() {
   // ⌘+scroll zooms. Differently-sized images stay framed in the same spot.
   if (single) {
     return (
-      <div className="pin viewer">
+      <div
+        className={`pin viewer${color ? " colored" : ""}`}
+        style={color ? ({ ["--pc" as string]: color } as React.CSSProperties) : undefined}
+      >
         <div className="viewer-head" onMouseDown={onHeadDown}>
+          {color && <span className="pin-color-dot" style={{ background: color }} />}
           {view.total > 1 && (
             <button className="vh-btn" title="Previous (←)" onClick={() => void deckStep(-1)}>
               ‹
@@ -339,6 +437,18 @@ export default function Pin() {
           />
         </div>
 
+        {/* Per-image note bar at the bottom of the rectangle. */}
+        <textarea
+          className="viewer-note"
+          value={note}
+          placeholder="Add a note…"
+          spellCheck={false}
+          onChange={(e) => onNoteChange(e.target.value)}
+          onFocus={onNoteFocus}
+          onBlur={onNoteBlur}
+          onKeyDown={onNoteKeyDown}
+        />
+
         {showTools && (
           <div className="toolbar open viewer-tools">
             <button className="ic" title="Zoom out (⌘+scroll)" onClick={() => zoomBy(1 / ZOOM_STEP)}>
@@ -361,6 +471,8 @@ export default function Pin() {
               title="Opacity"
               onChange={(e) => changeOpacity(parseFloat(e.target.value))}
             />
+            <span className="sep" />
+            {swatchRow}
             <span className="sep" />
             <button
               className={`ic star${favorite ? " on" : ""}`}
@@ -391,8 +503,30 @@ export default function Pin() {
 
   // All mode: each image is its own window, sized to the image.
   return (
-    <div className="pin" onMouseDown={onDragStart} onWheel={onWheel}>
+    <div
+      className={`pin${color ? " colored" : ""}`}
+      style={color ? ({ ["--pc" as string]: color } as React.CSSProperties) : undefined}
+      onMouseDown={onDragStart}
+      onWheel={onWheel}
+    >
       <img src={view.dataUrl} alt="pinned" style={{ opacity }} draggable={false} />
+
+      {color && <span className="pin-color-dot corner" style={{ background: color }} />}
+
+      {/* Per-image note: a caption overlay at the bottom. Shown when there's a
+          note, or while the toolbar is open (so an empty note is editable). */}
+      {(note || showTools) && (
+        <textarea
+          className="pin-note"
+          value={note}
+          placeholder="Add a note…"
+          spellCheck={false}
+          onChange={(e) => onNoteChange(e.target.value)}
+          onFocus={onNoteFocus}
+          onBlur={onNoteBlur}
+          onKeyDown={onNoteKeyDown}
+        />
+      )}
 
       {/* Top-right toggle: reveal/hide the toolbar so it doesn't cover content. */}
       <button
@@ -429,6 +563,10 @@ export default function Pin() {
           title="Opacity"
           onChange={(e) => changeOpacity(parseFloat(e.target.value))}
         />
+
+        <span className="sep" />
+
+        {swatchRow}
 
         <span className="sep" />
 

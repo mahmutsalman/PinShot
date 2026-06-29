@@ -21,6 +21,10 @@ export interface PinView {
   favorite: boolean;
   /** This pin belongs to the aggregated Favorites view. */
   favoritesView: boolean;
+  /** Per-image free-text note (persisted). */
+  note: string;
+  /** Per-image color tag — a preset hex string, or "" for none. */
+  color: string;
 }
 
 export interface DeckSummary {
@@ -111,5 +115,12 @@ export const setImageClickThrough = (id: number, ignore: boolean) =>
   quiet("set_image_click_through", { id, ignore });
 export const setImageFavorite = (id: number, favorite: boolean) =>
   quiet("set_image_favorite", { id, favorite });
+export const setImageNote = (id: number, note: string) =>
+  quiet("set_image_note", { id, note });
+export const setImageColor = (id: number, color: string) =>
+  quiet("set_image_color", { id, color });
+/** Tell the backend a text field is focused so arrow/ESC keys aren't hijacked. */
+export const setTextEditing = (editing: boolean) =>
+  quiet("set_text_editing", { editing });
 export const resizePin = (label: string, width: number, height: number, center: boolean) =>
   quiet("resize_pin", { label, width, height, center });

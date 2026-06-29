@@ -737,3 +737,108 @@ kbd {
   border-radius: 7px;
   background: rgba(251, 191, 36, 0.08);
 }
+
+/* --- Per-image notes + color --------------------------------------------- */
+/* Text fields must allow selection/caret despite the global user-select:none. */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Single-mode note bar: a fixed-height footer under the image in the rectangle. */
+.viewer-note {
+  flex: 0 0 auto;
+  height: 56px;
+  resize: none;
+  border: none;
+  border-top: 1px solid var(--panel-border);
+  background: rgba(12, 14, 19, 0.98);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  outline: none;
+}
+.viewer-note::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* All-mode note: a translucent caption overlay at the image's bottom edge. */
+.pin-note {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  height: 42px;
+  resize: none;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(8, 10, 14, 0.82);
+  color: #f1f3f5;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 4px 7px;
+  outline: none;
+  backdrop-filter: blur(6px);
+}
+.pin-note::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Color swatch picker (in both toolbars). */
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.swatch {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+}
+.swatch.on {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+.swatch.none {
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* Color tag indicator dot (viewer header, and a corner badge in all-mode). */
+.pin-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.pin-color-dot.corner {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  width: 12px;
+  height: 12px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* Colored frame driven by the inline --pc custom property. */
+.pin.viewer.colored {
+  border-color: var(--pc);
+  box-shadow: 0 0 0 2px var(--pc), 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.pin.colored > img {
+  box-shadow: inset 0 0 0 2px var(--pc), 0 2px 12px rgba(0, 0, 0, 0.4);
+}
