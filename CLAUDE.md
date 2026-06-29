@@ -85,11 +85,18 @@ on it.
   rowid (no join table). Edited via store-only commands `set_image_note` /
   `set_image_color` (mirror `set_image_opacity` — no re-render; the editing
   window shows its own state optimistically and no other window shows that id).
-  UI (`Pin.tsx`): single mode gets a footer `<textarea class=viewer-note>` in
-  the rectangle; all mode gets a bottom caption overlay (`.pin-note`, shown when
-  non-empty or while the ⚙ toolbar is open). Color = a preset **swatch row** in
-  both toolbars → a colored frame (`--pc` inline var on `.pin`/`.pin.viewer`) +
-  a dot. Notes save **debounced (500 ms) + on blur + flushed on image switch**.
+  UI (`Pin.tsx`): single mode gets a bottom **footer** (`.viewer-footer`) =
+  note `<textarea class=viewer-note>` + the color **swatch row** (a 4×2 grid on
+  the right, so color is as discoverable as the note); all mode gets a bottom
+  caption overlay (`.pin-note`, shown when non-empty or while the ⚙ toolbar is
+  open) and reaches color via the ⚙ toolbar swatches. Color = a preset swatch
+  row → a colored frame (`--pc` inline var on `.pin`/`.pin.viewer`) + a dot.
+  Notes save **debounced (500 ms) + on blur + flushed on image switch**, AND
+  **Enter saves immediately** (Shift+Enter = newline). `set_image_note` returns
+  `Result`; `saveImageNote` (the Enter path) awaits it and shows an in-pin
+  toast (`.note-toast`) — green "✓ Saved to database" only on real DB success,
+  red "⚠ Not saved — …" on failure (and re-arms the pending text for retry).
+  The background autosave still uses the quiet (error-swallowing) `setImageNote`.
   **Keyboard gotcha:** a focused note must keep ← / → / ESC. The native key
   monitor would swallow them, so the deck has a `text_editing` flag set via
   `set_text_editing` on note focus/blur; the monitor passes keys through when
