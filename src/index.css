@@ -2,8 +2,9 @@
   --accent: #38bdf8;
   --viz: #a78bfa;
   --danger: #f87171;
-  /* Nearly opaque so the panel + its lists stay readable over ANY background. */
-  --panel-bg: rgba(20, 22, 28, 0.985);
+  /* Fully opaque so the panel + its lists stay readable over ANY background
+     (a bright/white window underneath used to wash out the white text). */
+  --panel-bg: rgb(20, 22, 28);
   --panel-border: rgba(255, 255, 255, 0.12);
   --text: #f1f3f5;
   --muted: #aeb4bd;
@@ -268,6 +269,9 @@ kbd {
 /* Collapsed "mini bar": just the two most-used actions, smaller, same colors. */
 .control.mini {
   padding: 8px;
+  /* Solid backing — the collapsed bar floats over arbitrary (often bright)
+     windows, so it must never let them bleed through behind the white text. */
+  background: var(--panel-bg);
 }
 .mini-row {
   display: flex;
@@ -303,18 +307,20 @@ kbd {
   max-width: 100%;
   padding: 6px 9px;
   font-size: 11.5px;
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  /* A solid, opaque chip fill (not a faint white wash) so each name has a
+     reliable dark backing whatever is behind the bar. */
+  background: #2b2f39;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 7px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .mini-chip:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: #363b47;
 }
 .mini-chip {
   display: flex;
@@ -334,8 +340,8 @@ kbd {
 }
 .mini-chip.on {
   border-color: var(--accent);
-  background: rgba(56, 189, 248, 0.16);
-  color: var(--text);
+  background: #14384a;
+  color: #ffffff;
 }
 
 /* Star toggle on session rows (sessions pane). */

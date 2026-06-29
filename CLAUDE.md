@@ -121,7 +121,20 @@ on it.
   Click-through pins can't be focused, so arrows won't reach them — expected.
   **ESC** (while a pin/viewer or the control panel is focused) hides all pins
   (`hide_pins`) — a quick dismiss while navigating.
-  - **Focus is grabbed deterministically, not via AppKit heuristics** (those
+  - **Primary mechanism: an app-local `NSEvent` key monitor** (`install_key_monitor`,
+    macOS). It catches ← / → / ESC whenever ANY PinShot panel is the *key* window —
+    which clicking the viewer reliably makes it — **without** depending on the
+    WKWebView becoming first responder (that grab is the flaky part: WebKit's
+    `makeFirstResponder` on a WKWebView is a long-standing weak spot, so after
+    clicking a floating viewer the DOM `keydown` sometimes never fired). It is
+    **app-local, not global**, so it only ever takes keys from PinShot's own key
+    window — never from other apps. It skips the control panel (whose web text
+    inputs need arrows/ESC), only acts in single mode while revealed, and
+    **swallows** handled keys so the DOM listeners below can't double-fire. The
+    DOM `keydown` listeners in `Pin`/`Control` remain as a secondary path (and
+    handle the control panel). This is the robust fix for "I clicked the rectangle
+    on another screen but arrows didn't navigate".
+  - **Focus is also grabbed deterministically, not via AppKit heuristics** (those
     were flaky — "works once then stops", or arrows leaking to the app you were
     in). Three pieces, all required: (1) `convert_to_panel` sets
     `becomesKeyOnlyIfNeeded(false)` so clicking the *image* (not just a text

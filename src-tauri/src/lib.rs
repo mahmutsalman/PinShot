@@ -65,6 +65,10 @@ pub fn run() {
                 for label in pins::PIN_LABELS {
                     pins::convert_to_panel(app.handle(), label);
                 }
+                // Robust ← / → / ESC for the single-mode viewer: an app-local
+                // NSEvent monitor that catches keys whenever a PinShot panel is
+                // key, independent of the flaky WKWebView first-responder grab.
+                pins::install_key_monitor(app.handle());
             }
             pins::show_control_initial(app.handle());
 

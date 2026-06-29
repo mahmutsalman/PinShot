@@ -27,3 +27,5 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
+# Objective-C block used for the app-local NSEvent key monitor (robust arrow nav).
+block = "0.1"

@@ -863,6 +863,84 @@ fn focus_panel(app: &AppHandle, label: &str) {
     }
 }
 
+/// Robust arrow-key / ESC navigation for the single-mode viewer.
+///
+/// THE PROBLEM: getting hardware keys into a WKWebView that lives in a
+/// non-activating NSPanel is flaky — `makeFirstResponder` on a WKWebView is a
+/// long-standing WebKit weak spot, so after clicking a floating viewer (esp.
+/// when another app on another screen had focus) the DOM `keydown` sometimes
+/// never fired and ← / → did nothing.
+///
+/// THE FIX: an **app-local** `NSEvent` monitor. It fires whenever ANY PinShot
+/// window is the *key* window (which clicking the viewer reliably makes it —
+/// `becomesKeyOnlyIfNeeded(false)` + a panel that can become key), WITHOUT
+/// needing the WKWebView to be first responder. It is NOT a global monitor, so
+/// it never steals keys from other apps — only from PinShot's own key window.
+/// We skip the control panel (its web text inputs need arrows/ESC) and only act
+/// in single mode while pins are revealed; handled keys are swallowed so the DOM
+/// listeners can't double-fire.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)] // cocoa `id`/`nil` aliases; same API the nspanel crate uses
+pub fn install_key_monitor(app: &AppHandle) {
+    use block::ConcreteBlock;
+    use tauri_nspanel::cocoa::base::{id, nil};
+    use tauri_nspanel::objc::{class, msg_send, sel, sel_impl};
+
+    const KEY_DOWN_MASK: u64 = 1 << 10; // NSEventMaskKeyDown
+    const LEFT: u16 = 123;
+    const RIGHT: u16 = 124;
+    const ESC: u16 = 53;
+
+    // The control panel hosts web text inputs (session name) that legitimately
+    // use arrows/ESC, so never hijack keys when IT is key — only the viewers.
+    let control_win: usize = panel(app, CONTROL_LABEL)
+        .map(|p| {
+            let content: id = p.content_view();
+            let w: id = unsafe { msg_send![content, window] };
+            w as usize
+        })
+        .unwrap_or(0);
+
+    let app_handle = app.clone();
+    let block = ConcreteBlock::new(move |event: id| -> id {
+        let key_code: u16 = unsafe { msg_send![event, keyCode] };
+        if key_code != LEFT && key_code != RIGHT && key_code != ESC {
+            return event;
+        }
+        let win: id = unsafe { msg_send![event, window] };
+        if win as usize == control_win {
+            return event; // let the control panel's web UI handle it
+        }
+        // Snapshot deck state, then RELEASE the lock before re-entering commands
+        // (the mutex isn't reentrant; deck_step_internal locks it again).
+        let (single, revealed, count) = {
+            let store = app_handle.state::<PinStore>();
+            let deck = store.0.lock().unwrap();
+            (deck.mode == Mode::Single, deck.revealed, deck.images.len())
+        };
+        if !revealed {
+            return event;
+        }
+        if key_code == ESC {
+            hide_pins_internal(&app_handle);
+            return nil;
+        }
+        if single && count > 1 {
+            deck_step_internal(&app_handle, if key_code == LEFT { -1 } else { 1 });
+            return nil; // swallow so the DOM keydown can't also fire
+        }
+        event
+    });
+    let block = block.copy();
+    // AppKit copies/retains the handler, so the local `block` can drop after this.
+    let _monitor: id = unsafe {
+        msg_send![class!(NSEvent), addLocalMonitorForEventsMatchingMask: KEY_DOWN_MASK handler: &*block]
+    };
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install_key_monitor(_app: &AppHandle) {}
+
 /// Ensure the single-mode viewer has a size (~60% of the cursor monitor) and a
 /// centered position the first time it's shown. Position then persists (drag the
 /// header to move it); size stays the computed default.
@@ -1342,7 +1420,13 @@ pub fn set_mode(app: AppHandle, store: State<PinStore>, all: bool) {
 }
 
 #[tauri::command]
-pub fn deck_step(app: AppHandle, store: State<PinStore>, delta: i32) {
+pub fn deck_step(app: AppHandle, delta: i32) {
+    deck_step_internal(&app, delta);
+}
+
+/// Advance the single-mode carousel (also called by the native key monitor).
+pub fn deck_step_internal(app: &AppHandle, delta: i32) {
+    let store = app.state::<PinStore>();
     let mut deck = store.0.lock().unwrap();
     let n = deck.images.len();
     if n == 0 {
@@ -1355,15 +1439,15 @@ pub fn deck_step(app: AppHandle, store: State<PinStore>, delta: i32) {
     let revealed = deck.revealed;
     let (session_id, mode, current, single_pos) =
         (deck.active_session, deck.mode, deck.current, deck.single_pos);
-    with_db(&app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
-    render_or_summary(&app, &mut deck);
+    with_db(app, |c| db_set_session_meta(c, session_id, mode, current, single_pos));
+    render_or_summary(app, &mut deck);
     drop(deck);
     // A cycle only happens when a focused PinShot window received the arrow key,
     // so re-assert that focus on the single-mode viewer — render() re-shows the
     // window, which would otherwise reset first-responder and break the NEXT
     // arrow press. (No-op effect on focus for "show all"; skip while hidden.)
     if single && revealed {
-        focus_panel(&app, PIN_LABELS[0]);
+        focus_panel(app, PIN_LABELS[0]);
     }
 }
 
@@ -1516,17 +1600,23 @@ pub fn reveal_pins(app: AppHandle, store: State<PinStore>) {
 /// (and their saved state) stay; only the windows go away. `revealed` flips to
 /// false so the control panel shows "Show pins" again.
 #[tauri::command]
-pub fn hide_pins(app: AppHandle, store: State<PinStore>) {
+pub fn hide_pins(app: AppHandle) {
+    hide_pins_internal(&app);
+}
+
+/// Hide all pins (also called by the native key monitor on ESC).
+pub fn hide_pins_internal(app: &AppHandle) {
+    let store = app.state::<PinStore>();
     let mut deck = store.0.lock().unwrap();
     deck.revealed = false;
     for label in PIN_LABELS {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.set_ignore_cursor_events(false);
-            hide(&app, &window, label);
+            hide(app, &window, label);
         }
     }
     deck.assign.clear();
-    emit_summary(&app, &deck);
+    emit_summary(app, &deck);
 }
 
 /// Auto-arrange every image on the cursor's monitor so they're all visible and
