@@ -5,9 +5,8 @@ the clipboard, pin it on top of everything — including other apps' fullscreen
 Spaces — then enlarge / collapse / zoom / fade / drag it, and re-paste to update.
 A reference-image HUD for tracing, comparing, or keeping a spec visible.
 
-**Sibling of FocusFlow** — reuses its non-activating-NSPanel core (see
-`~/.claude/notes/tauri-macos-floating-widget-over-fullscreen.md`), does NOT depend
-on it.
+Uses a non-activating macOS `NSPanel` core so the windows float over other apps'
+fullscreen Spaces and never steal focus when clicked.
 
 ## Architecture
 
@@ -44,7 +43,7 @@ on it.
   renders. `replace_image(id)` swaps an image in place.
 - **Sizing/position split**: the **frontend** sizes its own window (`resize_pin`,
   snappy zoom/collapse — keeps top-left, the macOS bottom-left anchor captured +
-  restored, same trick as FocusFlow); **Rust** owns position. Pins drag with OS
+  restored); **Rust** owns position. Pins drag with OS
   `startDragging`; `win.onMoved` → `set_image_pos` persists the new spot (mode-
   aware: single mode writes `single_pos`, all mode writes the image's pos). High-
   frequency mutations (`set_image_pos/scale/opacity/collapsed`) are store-only (no
@@ -232,4 +231,4 @@ on it.
   name field + ＋ / 🗑. `sessions-changed` event re-feeds the switcher.
 - Install to /Applications (with the required ad-hoc re-sign): `./install.sh`.
 - `Info.plist` keeps a Dock icon; flip `LSUIElement` to run Dock-less.
-- Icons in `src-tauri/icons/` are placeholders copied from FocusFlow — replace.
+- Icons in `src-tauri/icons/` are placeholders — replace.

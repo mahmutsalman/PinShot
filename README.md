@@ -5,13 +5,16 @@ onto your screen as a floating pin that stays visible over **fullscreen apps**,
 then resize / fade / move it — a reference-image HUD for tracing, comparing specs,
 or keeping something in view while you work.
 
-Built on the same non-activating-NSPanel core as **FocusFlow**.
+Built on a non-activating macOS `NSPanel` core, so pins float over other apps'
+fullscreen Spaces and clicking them never steals focus from what you're doing.
+
+![PinShot preview](docs/preview.png)
 
 ## Use it
 
 1. Take a screenshot **to the clipboard** — on macOS that's `⌃⇧⌘4` (Control-Shift-
    Command-4), or `⌃⇧⌘4` then Space for a window.
-2. Click **📷 Paste a new pin** on the control panel, or press **⌥⌘V** from
+2. Click **Paste a new pin** on the control panel, or press **⌥⌘V** from
    anywhere. The image appears, floating on top.
 3. Hover a pin for its toolbar:
    - **⤡ / ⤢** collapse to a thumbnail / expand

@@ -6,7 +6,6 @@
 # `ditto`/`cp` BREAKS its ad-hoc code signature ("code has no resources but
 # signature indicates they must be present"), and the app then silently refuses
 # to launch. We must `codesign --force --deep --sign -` the copy IN PLACE.
-# (See ~/.claude/notes/tauri-macos-build-install.md for the full writeup.)
 set -euo pipefail
 cd "$(dirname "$0")"
 

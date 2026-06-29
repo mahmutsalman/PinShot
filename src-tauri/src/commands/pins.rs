@@ -787,8 +787,7 @@ fn resize_keep_anchor(window: &WebviewWindow, width: f64, height: f64, center: b
 
 /// Convert a (hidden, config-created) floating window into a non-activating
 /// NSPanel so it floats over OTHER apps' fullscreen Spaces. Call once per window,
-/// from setup (main thread). Recipe: tauri-nspanel's `fullscreen` example (see
-/// ~/.claude/notes/tauri-macos-floating-widget-over-fullscreen.md).
+/// from setup (main thread). Recipe: tauri-nspanel's `fullscreen` example.
 #[cfg(target_os = "macos")]
 #[allow(deprecated)] // cocoa re-exports; same API the plugin's own example uses
 pub fn convert_to_panel(app: &AppHandle, label: &str) {

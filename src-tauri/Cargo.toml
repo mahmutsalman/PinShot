@@ -2,7 +2,7 @@
 name = "pinshot"
 version = "0.1.0"
 description = "Floating screenshot pin overlay"
-authors = ["Mahmut Salman"]
+authors = ["PinShot contributors"]
 edition = "2021"
 
 [lib]
