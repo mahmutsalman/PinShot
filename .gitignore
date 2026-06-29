@@ -10,3 +10,15 @@ src-tauri/target
 # editor
 .vscode/*
 !.vscode/extensions.json
+# secrets / credentials (defensive — none are committed)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.p8
+*.keystore
+*.mobileprovision
+# tauri signing keys / local artifacts
+.tauri/
+*.tauri.key*
