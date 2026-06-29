@@ -166,9 +166,20 @@ on it.
     runtime via `class_addMethod`. It does NOT activate the app or change the
     over-fullscreen / non-activating behavior (those come from the style mask +
     collection behavior). Paired with grabbing focus on the note's **mousedown**
-    (`onNotePointerDown` → `focus_pin`), not just the focus event — the first
-    click on an inactive panel is often consumed making it key, so the field's
-    own focus event may never fire.
+    (`onNotePointerDown`), not just the focus event — the first click on an
+    inactive panel is often consumed making it key, so the field's own focus
+    event may never fire.
+  - **…but the *reliable* fix for note focus is activating the app.** `canBecomeMain`
+    only fixed it while PinShot was already foreground; a WKWebView text field
+    only reliably takes the caret while its app is ACTIVE, so once another app
+    became active, clicking the background panel made it key but the textarea
+    still wouldn't focus ("worked at first, then stopped"). The note's
+    mousedown/focus therefore call **`focus_pin_edit`** (`focus_panel_edit`),
+    which does `NSApp activateIgnoringOtherApps:` then key + first-responder.
+    Used ONLY for note editing — plain pin clicks / drag / color / arrow nav keep
+    the non-activating `focus_pin`. Activating an app whose only windows are
+    all-Spaces panels grabs keyboard focus without leaving the current (even
+    fullscreen) Space, so the over-fullscreen overlay is preserved.
   - **Focus is also grabbed deterministically, not via AppKit heuristics** (those
     were flaky — "works once then stops", or arrows leaking to the app you were
     in). Three pieces, all required: (1) `convert_to_panel` sets
