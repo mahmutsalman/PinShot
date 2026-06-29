@@ -156,6 +156,19 @@ on it.
     DOM `keydown` listeners in `Pin`/`Control` remain as a secondary path (and
     handle the control panel). This is the robust fix for "I clicked the rectangle
     on another screen but arrows didn't navigate".
+  - **WKWebView text inputs (the note field) need the panel to become MAIN.**
+    A borderless window that can't become the *main* window is the classic cause
+    of "click a web text input, nothing happens / no caret" on macOS.
+    `tauri-nspanel`'s `RawNSPanel` overrides `canBecomeKeyWindow` (YES) but not
+    `canBecomeMainWindow` (NSPanel default NO), so note focus "worked only
+    sometimes". `patch_panel_focusable()` (called in setup after the panels
+    exist) adds a `canBecomeMainWindow → YES` method to the `RawNSPanel` class at
+    runtime via `class_addMethod`. It does NOT activate the app or change the
+    over-fullscreen / non-activating behavior (those come from the style mask +
+    collection behavior). Paired with grabbing focus on the note's **mousedown**
+    (`onNotePointerDown` → `focus_pin`), not just the focus event — the first
+    click on an inactive panel is often consumed making it key, so the field's
+    own focus event may never fire.
   - **Focus is also grabbed deterministically, not via AppKit heuristics** (those
     were flaky — "works once then stops", or arrows leaking to the app you were
     in). Three pieces, all required: (1) `convert_to_panel` sets
