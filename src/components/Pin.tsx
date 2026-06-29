@@ -75,6 +75,9 @@ export default function Pin() {
   // Save confirmation / error shown inside the pin (green ok, red error).
   const [noteToast, setNoteToast] = useState<{ ok: boolean; text: string } | null>(null);
   const noteToastTimer = useRef<number | null>(null);
+  // Brief green pulse on the note field right after a successful save.
+  const [savedPulse, setSavedPulse] = useState(false);
+  const savedPulseTimer = useRef<number | null>(null);
   // Toolbar is hidden by default (it covered the image) — revealed by the ⚙.
   const [showTools, setShowTools] = useState(false);
   // Single-mode viewer: transient zoom + pan of the image WITHIN the fixed
@@ -265,8 +268,14 @@ export default function Pin() {
     try {
       await saveImageNote(id, note);
       showNoteToast(true, "✓ Saved to database");
+      // Saved: blur the field (caret leaves → a clear "done/saved" state; click
+      // the note again to edit) and flash a brief green pulse on it.
+      (document.activeElement as HTMLElement | null)?.blur();
+      setSavedPulse(true);
+      if (savedPulseTimer.current) window.clearTimeout(savedPulseTimer.current);
+      savedPulseTimer.current = window.setTimeout(() => setSavedPulse(false), 1100);
     } catch (err) {
-      // Keep the text owed so a later blur/autosave can retry.
+      // Keep the text owed so a later blur/autosave can retry (stay in the field).
       pendingNote.current = { id, text: note };
       showNoteToast(false, `⚠ Not saved — ${String(err)}`);
     }
@@ -489,7 +498,7 @@ export default function Pin() {
         {/* Per-image note + color row at the bottom of the rectangle. */}
         <div className="viewer-footer">
           <textarea
-            className="viewer-note"
+            className={`viewer-note${savedPulse ? " saved" : ""}`}
             value={note}
             placeholder="Add a note…  (Enter to save · Shift+Enter = new line)"
             spellCheck={false}
@@ -572,7 +581,7 @@ export default function Pin() {
           note, or while the toolbar is open (so an empty note is editable). */}
       {(note || showTools) && (
         <textarea
-          className="pin-note"
+          className={`pin-note${savedPulse ? " saved" : ""}`}
           value={note}
           placeholder="Add a note…  (Enter to save)"
           spellCheck={false}
