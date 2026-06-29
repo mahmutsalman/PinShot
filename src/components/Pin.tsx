@@ -225,6 +225,14 @@ export default function Pin() {
     noteTimer.current = window.setTimeout(flushNote, NOTE_SAVE_DELAY);
   }
 
+  // Grab keyboard focus on the PRESS, before the browser tries to focus the
+  // field — on a floating panel the first click is often consumed just making
+  // the window key, so the textarea's own focus event may never fire. Making the
+  // panel key + webview first-responder here lets the same click land the caret.
+  function onNotePointerDown() {
+    void focusPin(label);
+  }
+
   // Tell the backend a text field is focused so the native key monitor stops
   // grabbing ← / → / ESC (otherwise they'd cycle/hide instead of editing).
   function onNoteFocus() {
@@ -484,6 +492,7 @@ export default function Pin() {
             value={note}
             placeholder="Add a note…  (Enter to save · Shift+Enter = new line)"
             spellCheck={false}
+            onMouseDown={onNotePointerDown}
             onChange={(e) => onNoteChange(e.target.value)}
             onFocus={onNoteFocus}
             onBlur={onNoteBlur}
@@ -566,6 +575,7 @@ export default function Pin() {
           value={note}
           placeholder="Add a note…  (Enter to save)"
           spellCheck={false}
+          onMouseDown={onNotePointerDown}
           onChange={(e) => onNoteChange(e.target.value)}
           onFocus={onNoteFocus}
           onBlur={onNoteBlur}

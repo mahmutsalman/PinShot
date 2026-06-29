@@ -824,6 +824,45 @@ pub fn convert_to_panel(app: &AppHandle, label: &str) {
     }
 }
 
+/// Make WKWebView text inputs (the note field) reliably focusable / show a caret.
+///
+/// A borderless / non-titled window that CANNOT become the *main* window is the
+/// classic cause of "clicking a web text input does nothing / no cursor" on
+/// macOS. `tauri-nspanel`'s `RawNSPanel` overrides `canBecomeKeyWindow` (YES)
+/// but leaves `canBecomeMainWindow` at NSPanel's default (NO), so text focus was
+/// flaky ("works sometimes"). We add a `canBecomeMainWindow → YES` method to the
+/// `RawNSPanel` class at runtime. This does NOT activate the app or change the
+/// over-fullscreen / non-activating behavior (that's the style mask + collection
+/// behavior); it only lets the panel hold first-responder focus for editing.
+/// Call once, AFTER the first panel exists (so the class is registered).
+#[cfg(target_os = "macos")]
+pub fn patch_panel_focusable() {
+    use tauri_nspanel::objc::runtime::{class_addMethod, Class, Object, Sel, BOOL, YES};
+    use tauri_nspanel::objc::{sel, sel_impl};
+
+    extern "C" fn can_become_main(_: &Object, _: Sel) -> BOOL {
+        YES
+    }
+
+    unsafe {
+        let Some(cls) = Class::get("RawNSPanel") else {
+            log::error!("pins: RawNSPanel class not registered yet; can't patch focus");
+            return;
+        };
+        let cls_mut = cls as *const Class as *mut Class;
+        // Type encoding: BOOL return (c), self (@), _cmd (:).
+        let types = b"c@:\0".as_ptr() as *const std::os::raw::c_char;
+        let imp: extern "C" fn(&Object, Sel) -> BOOL = can_become_main;
+        let added = class_addMethod(
+            cls_mut,
+            sel!(canBecomeMainWindow),
+            std::mem::transmute::<_, tauri_nspanel::objc::runtime::Imp>(imp),
+            types,
+        );
+        log::info!("pins: patched RawNSPanel canBecomeMainWindow (added={:?})", added);
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn panel(
     app: &AppHandle,

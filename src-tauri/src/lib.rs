@@ -65,6 +65,10 @@ pub fn run() {
                 for label in pins::PIN_LABELS {
                     pins::convert_to_panel(app.handle(), label);
                 }
+                // Let panels become the main window so WKWebView text inputs
+                // (the note field) reliably take focus / show a caret. Must run
+                // after the first to_panel() above registered the class.
+                pins::patch_panel_focusable();
                 // Robust ← / → / ESC for the single-mode viewer: an app-local
                 // NSEvent monitor that catches keys whenever a PinShot panel is
                 // key, independent of the flaky WKWebView first-responder grab.
