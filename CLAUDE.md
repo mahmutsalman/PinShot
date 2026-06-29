@@ -124,9 +124,13 @@ on it.
   flag; `switch_session`/`create_session`/`delete_session` go through
   `render_or_summary`, so hiding pins stays hidden when you switch sessions (and
   launch is always quiet, so hidden persists across restart).
-- **Save toast**: `create_pin` emits a `pin-saved` event (count) after a
-  successful insert; the control panel shows a green "✓ Saved to database (N)"
-  toast for ~2.2s. Covers paste via button, ⌥⌘V, and tray — works in mini too.
+- **Paste confirmation = inline button feedback**: `create_pin` emits a
+  `pin-saved` event (count) after a successful insert; the **Paste button itself**
+  flashes green "✓ Saved" (mini) / "✓ Saved to database (N)" (full) for ~1.8s,
+  then reverts. Covers paste via button, ⌥⌘V, and tray. (Replaced an
+  absolutely-positioned `.toast` overlay that had nowhere sensible to sit in the
+  resized-to-content mini bar.) The per-image note save still uses its own
+  in-pin `.note-toast`.
 - **Show all** = every image visible at once at its saved position. **Single** =
   one **fixed viewer rectangle** (a single window, ~60% of the monitor, centered
   first time, position persisted via `single_pos`, size = `Deck.single_size`
