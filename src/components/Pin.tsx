@@ -440,7 +440,11 @@ export default function Pin() {
           <div className={`note-toast${noteToast.ok ? " ok" : " err"}`}>{noteToast.text}</div>
         )}
         <div className="viewer-head" onMouseDown={onHeadDown}>
-          {color && <span className="pin-color-dot" style={{ background: color }} />}
+          {/* Always reserve the color-dot slot so the nav buttons don't shift
+              when navigating between colored and uncolored images. */}
+          <span className="vh-color" aria-hidden>
+            {color && <span className="pin-color-dot" style={{ background: color }} />}
+          </span>
           {view.total > 1 && (
             <button className="vh-btn" title="Previous (←)" onClick={() => void deckStep(-1)}>
               ‹

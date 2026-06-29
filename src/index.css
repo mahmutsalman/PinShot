@@ -911,6 +911,17 @@ textarea {
   font-size: 10px;
 }
 
+/* Fixed-width slot in the viewer header that always reserves room for the color
+   dot — so the ‹ / count don't shift between colored and uncolored images. */
+.vh-color {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Color tag indicator dot (viewer header, and a corner badge in all-mode). */
 .pin-color-dot {
   width: 10px;
