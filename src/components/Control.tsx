@@ -61,10 +61,12 @@ export default function Control() {
       return false;
     }
   });
-  const [toast, setToast] = useState<string | null>(null);
+  // After a successful paste the Paste button briefly flips to "✓ Saved" (inline
+  // feedback — a floating toast had nowhere sensible to sit in the mini bar).
+  const [savedN, setSavedN] = useState<number | null>(null);
   const editing = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const toastTimer = useRef<number | null>(null);
+  const savedTimer = useRef<number | null>(null);
 
   // Mini-bar quick list: starred sessions first (always pinned), then most-recent,
   // capped. Vertical rows; only shown when there's more than one to switch between.
@@ -91,14 +93,13 @@ export default function Control() {
     }
   }, [mini]);
 
-  // Confirmation toast on every successful paste (button, ⌥⌘V, or tray) — the
-  // backend emits "pin-saved" with the new count.
+  // Confirmation on every successful paste (button, ⌥⌘V, or tray) — the backend
+  // emits "pin-saved" with the new count; the Paste button flashes "✓ Saved".
   useEffect(() => {
     const un = listen<number>("pin-saved", (e) => {
-      const n = e.payload;
-      setToast(`✓ Saved to database (${n} pin${n === 1 ? "" : "s"})`);
-      if (toastTimer.current) window.clearTimeout(toastTimer.current);
-      toastTimer.current = window.setTimeout(() => setToast(null), 2200);
+      setSavedN(e.payload);
+      if (savedTimer.current) window.clearTimeout(savedTimer.current);
+      savedTimer.current = window.setTimeout(() => setSavedN(null), 1800);
     });
     return () => {
       void un.then((f) => f());
@@ -220,8 +221,6 @@ export default function Control() {
     if (active && n && n !== active.name) void renameSession(active.id, n);
   }
 
-  const toastEl = toast ? <div className="toast">{toast}</div> : null;
-
   const titlebar = (
     <div className="titlebar">
       <span className="brand">📌 PinShot</span>
@@ -244,15 +243,14 @@ export default function Control() {
   if (mini) {
     return (
       <div className="control mini" ref={rootRef} onMouseDown={onDragStart}>
-        {toastEl}
         <div className="mini-row">
           <span className="mini-grip" title="Drag to move" aria-hidden />
           <button
-            className="btn-paste mini-btn"
+            className={`btn-paste mini-btn${savedN != null ? " saved" : ""}`}
             title="Paste a new pin (⌥⌘V)"
             onClick={() => void createPin()}
           >
-            Paste
+            {savedN != null ? "✓ Saved" : "Paste"}
           </button>
           {deck.count > 0 && (
             <button
@@ -294,7 +292,6 @@ export default function Control() {
   if (pane === "sessions") {
     return (
       <div className="control" ref={rootRef} onMouseDown={onDragStart}>
-        {toastEl}
         {titlebar}
         <div className="pane-head">
           <span className="pane-title">Sessions</span>
@@ -365,7 +362,6 @@ export default function Control() {
   // --- Main pane ---------------------------------------------------------------
   return (
     <div className="control" ref={rootRef} onMouseDown={onDragStart}>
-      {toastEl}
       {titlebar}
 
       {/* Session bar: open the list to switch; rename the active one inline.
@@ -419,9 +415,15 @@ export default function Control() {
       )}
 
       {/* The two most-used actions, color-coded and grouped: cyan = Paste,
-          violet = visibility. */}
-      <button className="btn-paste" title="Paste the clipboard image as a new pin (⌥⌘V)" onClick={() => void createPin()}>
-        📷 Paste a new pin
+          violet = visibility. On a successful paste it flashes a "✓ Saved". */}
+      <button
+        className={`btn-paste${savedN != null ? " saved" : ""}`}
+        title="Paste the clipboard image as a new pin (⌥⌘V)"
+        onClick={() => void createPin()}
+      >
+        {savedN != null
+          ? `✓ Saved to database (${savedN})`
+          : "Paste a new pin"}
       </button>
 
       {deck.count > 0 && (
