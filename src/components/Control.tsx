@@ -246,15 +246,13 @@ export default function Control() {
       <div className="control mini" ref={rootRef} onMouseDown={onDragStart}>
         {toastEl}
         <div className="mini-row">
-          <span className="mini-grip" title="PinShot — drag to move">
-            📌
-          </span>
+          <span className="mini-grip" title="Drag to move" aria-hidden />
           <button
             className="btn-paste mini-btn"
             title="Paste a new pin (⌥⌘V)"
             onClick={() => void createPin()}
           >
-            📷 Paste
+            Paste
           </button>
           {deck.count > 0 && (
             <button
@@ -262,11 +260,11 @@ export default function Control() {
               title={deck.revealed ? "Hide pins" : "Show pins"}
               onClick={() => (deck.revealed ? void hidePins() : void revealPins())}
             >
-              {deck.revealed ? "🙈" : `👁 ${deck.count}`}
+              {deck.revealed ? "Hide" : `Show ${deck.count}`}
             </button>
           )}
-          <button className="ic" title="Expand panel" onClick={() => setMini(false)}>
-            ⤢
+          <button className="mini-expand" title="Expand panel" onClick={() => setMini(false)}>
+            Expand
           </button>
         </div>
 

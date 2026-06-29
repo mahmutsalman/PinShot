@@ -278,13 +278,24 @@ kbd {
   align-items: center;
   gap: 6px;
 }
+/* Subtle dotted drag handle (no emoji) — the whole bar drags, this just hints it. */
 .mini-grip {
-  font-size: 14px;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 22px;
   cursor: grab;
-  padding: 0 2px;
+  border-radius: 3px;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.55) 1px, transparent 1.3px);
+  background-size: 4px 5px;
+  background-position: center;
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+.mini-grip:hover {
+  opacity: 0.85;
 }
 .mini-btn {
-  padding: 7px 10px;
+  padding: 9px 10px;
   font-size: 12px;
   font-weight: 700;
   border-radius: 9px;
@@ -293,6 +304,25 @@ kbd {
 }
 .btn-paste.mini-btn {
   flex: 1;
+  letter-spacing: 0.3px;
+}
+.btn-visibility.mini-btn {
+  flex: 0 0 auto;
+}
+/* Tertiary "Expand" — a quiet ghost button so Paste/visibility stay primary. */
+.mini-expand {
+  flex: 0 0 auto;
+  padding: 9px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+}
+.mini-expand:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.12);
 }
 /* Recent-session quick-switch list in the mini bar — vertical, full-width rows
    so long session names stay readable (truncated with an ellipsis, not spilling). */
