@@ -496,8 +496,10 @@ fn db_update_image_click_through(conn: &Connection, id: u64, ct: bool) {
     let _ = conn.execute("UPDATE images SET click_through=?1 WHERE id=?2", params![ct as i64, id as i64]);
 }
 
-fn db_update_image_note(conn: &Connection, id: u64, note: &str) {
-    let _ = conn.execute("UPDATE images SET note=?1 WHERE id=?2", params![note, id as i64]);
+/// Returns the rusqlite result so callers can confirm the write actually landed
+/// (the note-save toast must only show "saved" on a real success).
+fn db_update_image_note(conn: &Connection, id: u64, note: &str) -> rusqlite::Result<usize> {
+    conn.execute("UPDATE images SET note=?1 WHERE id=?2", params![note, id as i64])
 }
 
 fn db_update_image_color(conn: &Connection, id: u64, color: &str) {
@@ -1399,13 +1401,17 @@ pub fn set_image_click_through(app: AppHandle, store: State<PinStore>, id: u64, 
 
 /// Persist an image's text note (store-only, no re-render — the editing window
 /// already shows the live text optimistically; no other window shows this id).
+/// Returns Err with a message if the DB write fails, so the UI can show a
+/// "saved" confirmation ONLY on a real success (and an error otherwise).
 #[tauri::command]
-pub fn set_image_note(app: AppHandle, store: State<PinStore>, id: u64, note: String) {
+pub fn set_image_note(app: AppHandle, store: State<PinStore>, id: u64, note: String) -> Result<(), String> {
     let mut deck = store.0.lock().unwrap();
     if let Some(i) = find_index(&deck, id) {
         deck.images[i].note = note.clone();
-        with_db(&app, |c| db_update_image_note(c, id, &note));
     }
+    with_db(&app, |c| db_update_image_note(c, id, &note))
+        .map(|_| ())
+        .map_err(|e| format!("Could not save the note: {e}"))
 }
 
 /// Persist an image's color tag (a preset hex string, or "" for none).

@@ -15,6 +15,7 @@ import {
   setImageClickThrough,
   setImageFavorite,
   setImageNote,
+  saveImageNote,
   setImageColor,
   setTextEditing,
   deckStep,
@@ -70,6 +71,9 @@ export default function Pin() {
   // we can flush it on blur / when the shown image changes (never lose an edit).
   const noteTimer = useRef<number | null>(null);
   const pendingNote = useRef<{ id: number; text: string } | null>(null);
+  // Save confirmation / error shown inside the pin (green ok, red error).
+  const [noteToast, setNoteToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const noteToastTimer = useRef<number | null>(null);
   // Toolbar is hidden by default (it covered the image) — revealed by the ⚙.
   const [showTools, setShowTools] = useState(false);
   // Single-mode viewer: transient zoom + pan of the image WITHIN the fixed
@@ -231,9 +235,42 @@ export default function Pin() {
     flushNote();
     void setTextEditing(false);
   }
+
+  function showNoteToast(ok: boolean, text: string) {
+    setNoteToast({ ok, text });
+    if (noteToastTimer.current) window.clearTimeout(noteToastTimer.current);
+    // Success disappears quickly; an error lingers so it can be read.
+    noteToastTimer.current = window.setTimeout(() => setNoteToast(null), ok ? 2000 : 4500);
+  }
+
+  // Enter = save now (and confirm); Shift+Enter = newline. Confirmation shows
+  // ONLY after the DB write actually succeeds; a failure shows a red message.
+  async function saveNoteNow() {
+    if (!view) return;
+    if (noteTimer.current) {
+      window.clearTimeout(noteTimer.current);
+      noteTimer.current = null;
+    }
+    pendingNote.current = null;
+    const id = view.id;
+    try {
+      await saveImageNote(id, note);
+      showNoteToast(true, "✓ Saved to database");
+    } catch (err) {
+      // Keep the text owed so a later blur/autosave can retry.
+      pendingNote.current = { id, text: note };
+      showNoteToast(false, `⚠ Not saved — ${String(err)}`);
+    }
+  }
+
   function onNoteKeyDown(e: React.KeyboardEvent) {
     e.stopPropagation();
-    if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
+    if (e.key === "Escape") {
+      (e.target as HTMLTextAreaElement).blur();
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault(); // Enter saves; Shift+Enter makes a newline
+      void saveNoteNow();
+    }
   }
 
   function chooseColor(c: string) {
@@ -381,6 +418,9 @@ export default function Pin() {
         className={`pin viewer${color ? " colored" : ""}`}
         style={color ? ({ ["--pc" as string]: color } as React.CSSProperties) : undefined}
       >
+        {noteToast && (
+          <div className={`note-toast${noteToast.ok ? " ok" : " err"}`}>{noteToast.text}</div>
+        )}
         <div className="viewer-head" onMouseDown={onHeadDown}>
           {color && <span className="pin-color-dot" style={{ background: color }} />}
           {view.total > 1 && (
@@ -437,17 +477,20 @@ export default function Pin() {
           />
         </div>
 
-        {/* Per-image note bar at the bottom of the rectangle. */}
-        <textarea
-          className="viewer-note"
-          value={note}
-          placeholder="Add a note…"
-          spellCheck={false}
-          onChange={(e) => onNoteChange(e.target.value)}
-          onFocus={onNoteFocus}
-          onBlur={onNoteBlur}
-          onKeyDown={onNoteKeyDown}
-        />
+        {/* Per-image note + color row at the bottom of the rectangle. */}
+        <div className="viewer-footer">
+          <textarea
+            className="viewer-note"
+            value={note}
+            placeholder="Add a note…  (Enter to save · Shift+Enter = new line)"
+            spellCheck={false}
+            onChange={(e) => onNoteChange(e.target.value)}
+            onFocus={onNoteFocus}
+            onBlur={onNoteBlur}
+            onKeyDown={onNoteKeyDown}
+          />
+          {swatchRow}
+        </div>
 
         {showTools && (
           <div className="toolbar open viewer-tools">
@@ -471,8 +514,6 @@ export default function Pin() {
               title="Opacity"
               onChange={(e) => changeOpacity(parseFloat(e.target.value))}
             />
-            <span className="sep" />
-            {swatchRow}
             <span className="sep" />
             <button
               className={`ic star${favorite ? " on" : ""}`}
@@ -511,6 +552,10 @@ export default function Pin() {
     >
       <img src={view.dataUrl} alt="pinned" style={{ opacity }} draggable={false} />
 
+      {noteToast && (
+        <div className={`note-toast${noteToast.ok ? " ok" : " err"}`}>{noteToast.text}</div>
+      )}
+
       {color && <span className="pin-color-dot corner" style={{ background: color }} />}
 
       {/* Per-image note: a caption overlay at the bottom. Shown when there's a
@@ -519,7 +564,7 @@ export default function Pin() {
         <textarea
           className="pin-note"
           value={note}
-          placeholder="Add a note…"
+          placeholder="Add a note…  (Enter to save)"
           spellCheck={false}
           onChange={(e) => onNoteChange(e.target.value)}
           onFocus={onNoteFocus}

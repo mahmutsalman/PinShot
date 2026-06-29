@@ -115,8 +115,12 @@ export const setImageClickThrough = (id: number, ignore: boolean) =>
   quiet("set_image_click_through", { id, ignore });
 export const setImageFavorite = (id: number, favorite: boolean) =>
   quiet("set_image_favorite", { id, favorite });
+/** Background (debounced / on-blur) note save — errors swallowed. */
 export const setImageNote = (id: number, note: string) =>
   quiet("set_image_note", { id, note });
+/** Explicit note save (Enter) — rejects on failure so the UI can confirm/alert. */
+export const saveImageNote = (id: number, note: string) =>
+  invoke<void>("set_image_note", { id, note });
 export const setImageColor = (id: number, color: string) =>
   quiet("set_image_color", { id, color });
 /** Tell the backend a text field is focused so arrow/ESC keys aren't hijacked. */
