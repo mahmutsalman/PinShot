@@ -13,6 +13,7 @@ import {
   setImageOpacity,
   setImageCollapsed,
   setImageClickThrough,
+  setImageFavorite,
   deckStep,
   focusPin,
   hidePins,
@@ -46,6 +47,7 @@ export default function Pin() {
   const [opacity, setOpacity] = useState(1);
   const [collapsed, setCollapsed] = useState(false);
   const [clickThrough, setClickThrough] = useState(false);
+  const [favorite, setFavorite] = useState(false);
   // Toolbar is hidden by default (it covered the image) — revealed by the ⚙.
   const [showTools, setShowTools] = useState(false);
   // Single-mode viewer: transient zoom + pan of the image WITHIN the fixed
@@ -82,6 +84,7 @@ export default function Pin() {
     setOpacity(view.opacity);
     setCollapsed(view.collapsed);
     setClickThrough(view.clickThrough);
+    setFavorite(view.favorite);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     idRef.current = view.id;
@@ -160,6 +163,12 @@ export default function Pin() {
     if (view) void setImageClickThrough(view.id, next);
   }
 
+  function toggleFavorite() {
+    const next = !favorite;
+    setFavorite(next);
+    if (view) void setImageFavorite(view.id, next);
+  }
+
   // --- single-mode viewer interactions ---------------------------------------
 
   /** Drag the header to MOVE the viewer window. */
@@ -227,8 +236,14 @@ export default function Pin() {
   }
 
   // Closing a pin permanently removes that image from the saved session, so
-  // confirm first — this is the main way images were getting lost.
+  // confirm first — this is the main way images were getting lost. In the
+  // Favorites view ✕ only removes it from Favorites (the original is kept), so
+  // it's a lighter, non-destructive action — no confirm needed there.
   async function confirmClose(imageId: number) {
+    if (view?.favoritesView) {
+      void closeImage(imageId);
+      return;
+    }
     const ok = await ask("Remove this image from the session? It won't be saved.", {
       title: "PinShot",
       kind: "warning",
@@ -249,7 +264,14 @@ export default function Pin() {
           <button className="ic" title="Expand" onClick={toggleCollapsed}>
             ⤢
           </button>
-          <button className="ic" title="Close" onClick={() => void confirmClose(view.id)}>
+          <button
+            className={`ic star${favorite ? " on" : ""}`}
+            title={favorite ? "Remove from Favorites" : "Add to Favorites"}
+            onClick={toggleFavorite}
+          >
+            {favorite ? "★" : "☆"}
+          </button>
+          <button className="ic" title={view.favoritesView ? "Remove from Favorites" : "Close"} onClick={() => void confirmClose(view.id)}>
             ✕
           </button>
         </div>
@@ -277,6 +299,13 @@ export default function Pin() {
             </button>
           )}
           <span className="vh-spacer" />
+          <button
+            className={`ic star${favorite ? " on" : ""}`}
+            title={favorite ? "Remove from Favorites" : "Add to Favorites"}
+            onClick={toggleFavorite}
+          >
+            {favorite ? "★" : "☆"}
+          </button>
           <button className="ic" title="Reset view (fit)" onClick={resetView}>
             ⤢
           </button>
@@ -287,7 +316,11 @@ export default function Pin() {
           >
             ⚙
           </button>
-          <button className="ic close" title="Close pin" onClick={() => void confirmClose(view.id)}>
+          <button
+            className="ic close"
+            title={view.favoritesView ? "Remove from Favorites" : "Close pin"}
+            onClick={() => void confirmClose(view.id)}
+          >
             ✕
           </button>
         </div>
@@ -329,6 +362,13 @@ export default function Pin() {
               onChange={(e) => changeOpacity(parseFloat(e.target.value))}
             />
             <span className="sep" />
+            <button
+              className={`ic star${favorite ? " on" : ""}`}
+              title={favorite ? "Remove from Favorites" : "Add to Favorites"}
+              onClick={toggleFavorite}
+            >
+              {favorite ? "★" : "☆"}
+            </button>
             <button
               className="ic"
               title="Replace with the current clipboard image"
@@ -393,6 +433,13 @@ export default function Pin() {
         <span className="sep" />
 
         <button
+          className={`ic star${favorite ? " on" : ""}`}
+          title={favorite ? "Remove from Favorites" : "Add to Favorites"}
+          onClick={toggleFavorite}
+        >
+          {favorite ? "★" : "☆"}
+        </button>
+        <button
           className="ic"
           title="Replace with the current clipboard image"
           onClick={() => void replaceImage(view.id)}
@@ -406,7 +453,7 @@ export default function Pin() {
         >
           👆
         </button>
-        <button className="ic close" title="Close pin" onClick={() => void confirmClose(view.id)}>
+        <button className="ic close" title={view.favoritesView ? "Remove from Favorites" : "Close pin"} onClick={() => void confirmClose(view.id)}>
           ✕
         </button>
       </div>

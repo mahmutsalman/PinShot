@@ -80,6 +80,24 @@ on it.
   = `sessions.last_used`, star = `sessions.starred` (both migrated via `ALTER TABLE`;
   star toggled by the ☆/★ button on each row in the sessions pane via
   `set_session_starred`). Mini window: fixed width 248, height = `52 + n*29`.
+- **Cross-session Favorites.** Each image has a `favorite` flag (★/☆ button on
+  every pin's toolbar — all-mode toolbar, single-mode viewer header, and the
+  collapsed chip-bar; `set_image_favorite`). A special, always-present,
+  undeletable **Favorites session** (`sessions.is_favorites = 1`, name "★
+  Favorites", created once in `init_store` via `db_favorites_or_init`) is a
+  **view, not a container**: when it's active, `db_load_session` aggregates
+  `images WHERE favorite=1` across ALL sessions instead of `WHERE session_id=`.
+  The deck carries a `favorites_view` flag (set wherever `active_session`
+  changes) surfaced on `PinView.favoritesView` + `DeckSummary.favoritesView`.
+  In the Favorites view, **✕ / Close all are non-destructive** — they
+  un-favorite (the original stays in its real session); only images that live
+  *in* the Favorites session itself (pasted while it was active — auto-favorited
+  so they show) are truly deleted. Edits (drag/zoom/opacity) persist to the
+  original rows since the deck id == `images.id` rowid regardless of which
+  session loaded it. `db_active_or_init` excludes Favorites so launch/healing
+  never auto-lands there. Control panel: a ★ jump button on the session row,
+  Favorites pinned to the top of the sessions pane + mini quick list (no
+  delete/star-toggle, gold styling), and an in-panel explainer when active.
 - **Visibility is global + sticky across sessions.** `revealed` is one deck-level
   flag; `switch_session`/`create_session`/`delete_session` go through
   `render_or_summary`, so hiding pins stays hidden when you switch sessions (and

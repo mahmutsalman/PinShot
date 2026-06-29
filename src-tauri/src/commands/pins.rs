@@ -49,6 +49,8 @@ struct DeckImage {
     opacity: f64,
     collapsed: bool,
     click_through: bool,
+    /// Starred for the cross-session Favorites view.
+    favorite: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -81,6 +83,10 @@ struct Deck {
     assign: HashMap<String, u64>,
     /// The session currently loaded into this deck (SQLite `sessions.id`).
     active_session: i64,
+    /// True when `active_session` is the special Favorites session, so the deck
+    /// holds the cross-session aggregation of favorited images (changes how
+    /// close / favorite behave: they remove-from-favorites, not destroy).
+    favorites_view: bool,
     /// Whether the pins have been shown this run. On launch we load the active
     /// session into memory but keep pins hidden ("launch quiet") until the user
     /// reveals them or pastes; switching sessions reveals immediately.
@@ -97,6 +103,7 @@ impl Default for Deck {
             single_size: None,
             assign: HashMap::new(),
             active_session: 0,
+            favorites_view: false,
             revealed: false,
         }
     }
@@ -130,6 +137,10 @@ pub struct PinView {
     total: usize,
     #[serde(rename = "clickThrough")]
     click_through: bool,
+    favorite: bool,
+    /// This window belongs to the cross-session Favorites view.
+    #[serde(rename = "favoritesView")]
+    favorites_view: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -146,6 +157,9 @@ struct DeckSummary {
     /// How many images "show all" can display at once (window-pool size).
     #[serde(rename = "poolSize")]
     pool_size: usize,
+    /// The active session is the cross-session Favorites view.
+    #[serde(rename = "favoritesView")]
+    favorites_view: bool,
 }
 
 /// One row for the session switcher in the control panel.
@@ -158,12 +172,15 @@ pub struct SessionInfo {
     #[serde(rename = "lastUsed")]
     last_used: i64,
     starred: bool,
+    /// The special always-present session that aggregates favorited images.
+    #[serde(rename = "isFavorites")]
+    is_favorites: bool,
 }
 
 /// SQLite handle (managed state). Opened once in setup; see [`init_store`].
 pub struct Db(pub Mutex<Connection>);
 
-fn make_view(img: &DeckImage, index: usize, total: usize, mode: Mode) -> PinView {
+fn make_view(img: &DeckImage, index: usize, total: usize, mode: Mode, favorites_view: bool) -> PinView {
     PinView {
         id: img.id,
         data_url: img.image.data_url.clone(),
@@ -178,6 +195,8 @@ fn make_view(img: &DeckImage, index: usize, total: usize, mode: Mode) -> PinView
         index: index + 1,
         total,
         click_through: img.click_through,
+        favorite: img.favorite,
+        favorites_view,
     }
 }
 
@@ -200,6 +219,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   last_used INTEGER,
   starred INTEGER NOT NULL DEFAULT 0,
+  is_favorites INTEGER NOT NULL DEFAULT 0,
   mode TEXT NOT NULL DEFAULT 'all',
   current_idx INTEGER NOT NULL DEFAULT 0,
   single_pos_x INTEGER,
@@ -218,7 +238,8 @@ CREATE TABLE IF NOT EXISTS images (
   scale REAL NOT NULL,
   opacity REAL NOT NULL,
   collapsed INTEGER NOT NULL,
-  click_through INTEGER NOT NULL
+  click_through INTEGER NOT NULL,
+  favorite INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS app_state (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 ";
@@ -251,6 +272,17 @@ pub fn open_db(app: &AppHandle) -> Connection {
         "ALTER TABLE sessions ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    // Cross-session favorites: a per-image flag + a special "Favorites" session
+    // that aggregates every favorited image. Both migrated for pre-existing DBs
+    // (errors when the column already exists — ignored).
+    let _ = conn.execute(
+        "ALTER TABLE images ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN is_favorites INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     conn
 }
 
@@ -269,6 +301,52 @@ fn db_create_session(conn: &Connection, name: &str) -> i64 {
         params![name, now],
     );
     conn.last_insert_rowid()
+}
+
+/// Is `id` the special Favorites session (the one that aggregates every
+/// favorited image, rather than owning its own session-scoped set)?
+fn is_favorites_session(conn: &Connection, id: i64) -> bool {
+    conn.query_row(
+        "SELECT is_favorites FROM sessions WHERE id=?1",
+        params![id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|v| v != 0)
+    .unwrap_or(false)
+}
+
+/// Return the Favorites session id, creating it ("★ Favorites") the first time.
+/// There is always exactly one; it can't be deleted.
+fn db_favorites_or_init(conn: &Connection) -> i64 {
+    if let Ok(id) = conn.query_row(
+        "SELECT id FROM sessions WHERE is_favorites=1 ORDER BY id ASC LIMIT 1",
+        [],
+        |r| r.get::<_, i64>(0),
+    ) {
+        return id;
+    }
+    let now = now_ts();
+    let _ = conn.execute(
+        "INSERT INTO sessions (name, created_at, last_used, is_favorites) VALUES ('★ Favorites', ?1, ?1, 1)",
+        params![now],
+    );
+    conn.last_insert_rowid()
+}
+
+/// Total favorited images across ALL sessions (the Favorites view's contents).
+fn db_favorites_count(conn: &Connection) -> usize {
+    conn.query_row("SELECT COUNT(*) FROM images WHERE favorite=1", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|v| v as usize)
+    .unwrap_or(0)
+}
+
+fn db_set_image_favorite(conn: &Connection, id: u64, favorite: bool) {
+    let _ = conn.execute(
+        "UPDATE images SET favorite=?1 WHERE id=?2",
+        params![favorite as i64, id as i64],
+    );
 }
 
 /// Bump a session's recency (used by paste / switch) for the mini-bar list.
@@ -322,8 +400,10 @@ fn db_active_or_init(conn: &Connection) -> i64 {
             return id;
         }
     }
+    // Fall back to the newest NORMAL session — never auto-land in Favorites
+    // (it's a view; the user opens it deliberately).
     if let Ok(id) = conn.query_row(
-        "SELECT id FROM sessions ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM sessions WHERE is_favorites=0 ORDER BY id DESC LIMIT 1",
         [],
         |r| r.get::<_, i64>(0),
     ) {
@@ -344,6 +424,7 @@ fn db_insert_image(
     opacity: f64,
     collapsed: bool,
     click_through: bool,
+    favorite: bool,
 ) -> rusqlite::Result<i64> {
     let (px, py) = match pos {
         Some((x, y)) => (Some(x), Some(y)),
@@ -351,11 +432,11 @@ fn db_insert_image(
     };
     conn.execute(
         "INSERT INTO images
-           (session_id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+           (session_id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through, favorite)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![
             session_id, img.data_url, img.width, img.height, img.fit_w, img.fit_h,
-            px, py, scale, opacity, collapsed as i64, click_through as i64
+            px, py, scale, opacity, collapsed as i64, click_through as i64, favorite as i64
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -410,36 +491,51 @@ fn db_set_session_meta(conn: &Connection, session_id: i64, mode: Mode, current: 
     );
 }
 
-/// Read every image + meta for one session, ready to drop into the deck.
+/// Map one `images` row (in the fixed column order below) into a `DeckImage`.
+fn row_to_deck_image(r: &rusqlite::Row) -> rusqlite::Result<DeckImage> {
+    let px: Option<i32> = r.get(6)?;
+    let py: Option<i32> = r.get(7)?;
+    Ok(DeckImage {
+        id: r.get::<_, i64>(0)? as u64,
+        image: PinImagePayload {
+            data_url: r.get(1)?,
+            width: r.get(2)?,
+            height: r.get(3)?,
+            fit_w: r.get(4)?,
+            fit_h: r.get(5)?,
+        },
+        pos: match (px, py) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        },
+        scale: r.get(8)?,
+        opacity: r.get(9)?,
+        collapsed: r.get::<_, i64>(10)? != 0,
+        click_through: r.get::<_, i64>(11)? != 0,
+        favorite: r.get::<_, i64>(12)? != 0,
+    })
+}
+
+/// Read every image + meta for one session, ready to drop into the deck. The
+/// Favorites session is special: instead of its own session-scoped images it
+/// aggregates every favorited image across ALL sessions.
 fn db_load_session(conn: &Connection, session_id: i64) -> (Vec<DeckImage>, Mode, usize, Option<(i32, i32)>) {
+    const COLS: &str =
+        "id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through, favorite";
     let mut images = Vec::new();
-    if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, data_url, width, height, fit_w, fit_h, pos_x, pos_y, scale, opacity, collapsed, click_through
-         FROM images WHERE session_id=?1 ORDER BY id ASC",
-    ) {
-        if let Ok(rows) = stmt.query_map(params![session_id], |r| {
-            let px: Option<i32> = r.get(6)?;
-            let py: Option<i32> = r.get(7)?;
-            Ok(DeckImage {
-                id: r.get::<_, i64>(0)? as u64,
-                image: PinImagePayload {
-                    data_url: r.get(1)?,
-                    width: r.get(2)?,
-                    height: r.get(3)?,
-                    fit_w: r.get(4)?,
-                    fit_h: r.get(5)?,
-                },
-                pos: match (px, py) {
-                    (Some(x), Some(y)) => Some((x, y)),
-                    _ => None,
-                },
-                scale: r.get(8)?,
-                opacity: r.get(9)?,
-                collapsed: r.get::<_, i64>(10)? != 0,
-                click_through: r.get::<_, i64>(11)? != 0,
-            })
-        }) {
-            images.extend(rows.flatten());
+    if is_favorites_session(conn, session_id) {
+        let sql = format!("SELECT {COLS} FROM images WHERE favorite=1 ORDER BY id ASC");
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            if let Ok(rows) = stmt.query_map([], row_to_deck_image) {
+                images.extend(rows.flatten());
+            }
+        }
+    } else {
+        let sql = format!("SELECT {COLS} FROM images WHERE session_id=?1 ORDER BY id ASC");
+        if let Ok(mut stmt) = conn.prepare(&sql) {
+            if let Ok(rows) = stmt.query_map(params![session_id], row_to_deck_image) {
+                images.extend(rows.flatten());
+            }
         }
     }
     let (mode_s, current, spx, spy): (String, i64, Option<i32>, Option<i32>) = conn
@@ -465,7 +561,7 @@ fn db_load_session(conn: &Connection, session_id: i64) -> (Vec<DeckImage>, Mode,
 fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
     let mut out = Vec::new();
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT s.id, s.name, COUNT(i.id), COALESCE(s.last_used, s.created_at, 0), COALESCE(s.starred, 0)
+        "SELECT s.id, s.name, COUNT(i.id), COALESCE(s.last_used, s.created_at, 0), COALESCE(s.starred, 0), COALESCE(s.is_favorites, 0)
          FROM sessions s LEFT JOIN images i ON i.session_id = s.id
          GROUP BY s.id ORDER BY s.id ASC",
     ) {
@@ -478,9 +574,18 @@ fn db_list_sessions(conn: &Connection, active: i64) -> Vec<SessionInfo> {
                 active: id == active,
                 last_used: r.get(3)?,
                 starred: r.get::<_, i64>(4)? != 0,
+                is_favorites: r.get::<_, i64>(5)? != 0,
             })
         }) {
             out.extend(rows.flatten());
+        }
+    }
+    // The Favorites row's real contents are all favorited images across every
+    // session, not its own session-scoped rows — report that count instead.
+    let fav_count = db_favorites_count(conn);
+    for s in out.iter_mut() {
+        if s.is_favorites {
+            s.count = fav_count;
         }
     }
     out
@@ -515,7 +620,10 @@ fn emit_sessions(app: &AppHandle, deck: &Deck) {
 /// from setup.
 pub fn init_store(app: &AppHandle) {
     let conn = open_db(app);
+    // The cross-session Favorites view is always present (created once).
+    let _ = db_favorites_or_init(&conn);
     let active = db_active_or_init(&conn);
+    let favorites_view = is_favorites_session(&conn, active);
     let (images, mode, current, single_pos) = db_load_session(&conn, active);
     // Forensic breadcrumb: how much data exists at launch (catches any loss).
     let total: i64 = conn
@@ -533,6 +641,7 @@ pub fn init_store(app: &AppHandle) {
         deck.current = current;
         deck.single_pos = single_pos;
         deck.active_session = active;
+        deck.favorites_view = favorites_view;
         deck.revealed = false;
     }
     app.manage(Db(Mutex::new(conn)));
@@ -845,7 +954,7 @@ fn render(app: &AppHandle, deck: &mut Deck) {
         }
         deck.assign.insert(label.to_string(), id);
 
-        let view = make_view(&deck.images[idx], idx, total, mode);
+        let view = make_view(&deck.images[idx], idx, total, mode, deck.favorites_view);
         let _ = app.emit(&format!("pin-view:{label}"), view);
     }
 
@@ -875,6 +984,7 @@ fn emit_summary(app: &AppHandle, deck: &Deck) {
         session_id: deck.active_session,
         revealed: deck.revealed,
         pool_size: pool_size(),
+        favorites_view: deck.favorites_view,
     };
     let _ = app.emit("deck-changed", summary);
 }
@@ -920,10 +1030,14 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
     // unpersisted in-memory image that would silently vanish on switch/restart.
     let session_id = with_db(app, |c| ensure_active_session(c, deck.active_session));
     deck.active_session = session_id;
+    // Pasting while the Favorites view is active auto-favorites the new image so
+    // it shows up there (the view only loads favorite=1 images).
+    let fav = with_db(app, |c| is_favorites_session(c, session_id));
+    deck.favorites_view = fav;
     let id = match with_db(app, |c| {
         db_set_active(c, session_id);
         db_touch_session(c, session_id);
-        db_insert_image(c, session_id, &payload, None, 1.0, 1.0, false, false)
+        db_insert_image(c, session_id, &payload, None, 1.0, 1.0, false, false, fav)
     }) {
         Ok(rowid) => rowid as u64,
         Err(e) => {
@@ -941,6 +1055,7 @@ pub fn create_pin_internal(app: &AppHandle) -> Result<u64, String> {
         opacity: 1.0,
         collapsed: false,
         click_through: false,
+        favorite: fav,
     });
     deck.current = deck.images.len() - 1;
     let (mode, current, single_pos) = (deck.mode, deck.current, deck.single_pos);
@@ -989,7 +1104,7 @@ pub fn get_pin_view(store: State<PinStore>, label: String) -> Option<PinView> {
     let deck = store.0.lock().unwrap();
     let id = *deck.assign.get(&label)?;
     let i = find_index(&deck, id)?;
-    Some(make_view(&deck.images[i], i, deck.images.len(), deck.mode))
+    Some(make_view(&deck.images[i], i, deck.images.len(), deck.mode, deck.favorites_view))
 }
 
 #[tauri::command]
@@ -1003,6 +1118,7 @@ pub fn get_deck_summary(store: State<PinStore>) -> serde_json::Value {
         "sessionId": deck.active_session,
         "revealed": deck.revealed,
         "poolSize": pool_size(),
+        "favoritesView": deck.favorites_view,
     })
 }
 
@@ -1064,6 +1180,37 @@ pub fn resize_pin(app: AppHandle, label: String, width: f64, height: f64, center
 #[tauri::command]
 pub fn close_image(app: AppHandle, store: State<PinStore>, id: u64) {
     let mut deck = store.0.lock().unwrap();
+
+    // In the Favorites view, ✕ means "remove from Favorites", not "destroy": the
+    // image still belongs to its real session. (An image that lives *in* the
+    // Favorites session itself — pasted while it was active — has no other home,
+    // so it's deleted.) Then reload the aggregation so it drops out.
+    if deck.favorites_view {
+        let fav_id = deck.active_session;
+        let home: i64 = with_db(&app, |c| {
+            c.query_row("SELECT session_id FROM images WHERE id=?1", params![id as i64], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap_or(0)
+        });
+        with_db(&app, |c| {
+            if home == fav_id {
+                db_delete_image(c, id);
+            } else {
+                db_set_image_favorite(c, id, false);
+            }
+        });
+        let (images, mode, current, single_pos) =
+            with_db(&app, |c| db_load_session(c, fav_id));
+        deck.images = images;
+        deck.mode = mode;
+        deck.current = current;
+        deck.single_pos = single_pos;
+        render(&app, &mut deck);
+        emit_sessions(&app, &deck);
+        return;
+    }
+
     if let Some(i) = find_index(&deck, id) {
         log::warn!(
             "close_image: deleting image id={id} from session={} (had {} images)",
@@ -1087,6 +1234,26 @@ pub fn close_image(app: AppHandle, store: State<PinStore>, id: u64) {
 #[tauri::command]
 pub fn close_all_pins(app: AppHandle, store: State<PinStore>) {
     let mut deck = store.0.lock().unwrap();
+
+    // Favorites view: "Close all" empties the favorites list non-destructively —
+    // un-favorite every foreign image (kept in its real session) and delete only
+    // the images that live in the Favorites session itself.
+    if deck.favorites_view {
+        let fav_id = deck.active_session;
+        with_db(&app, |c| {
+            let _ = c.execute(
+                "DELETE FROM images WHERE session_id=?1 AND favorite=1",
+                params![fav_id],
+            );
+            let _ = c.execute("UPDATE images SET favorite=0 WHERE favorite=1", []);
+        });
+        deck.images.clear();
+        deck.current = 0;
+        render(&app, &mut deck);
+        emit_sessions(&app, &deck);
+        return;
+    }
+
     log::warn!(
         "close_all_pins: deleting ALL {} images from session={}",
         deck.images.len(),
@@ -1110,6 +1277,32 @@ pub fn set_image_click_through(app: AppHandle, store: State<PinStore>, id: u64, 
         with_db(&app, |c| db_update_image_click_through(c, id, ignore));
     }
     render(&app, &mut deck);
+}
+
+/// Star / unstar an image for the cross-session Favorites view. Persists the
+/// flag, then refreshes: if the Favorites view is the active deck the toggled
+/// image appears/disappears (reload + re-render); in a normal session only the
+/// star state updates. Either way the switcher's Favorites count is refreshed.
+#[tauri::command]
+pub fn set_image_favorite(app: AppHandle, store: State<PinStore>, id: u64, favorite: bool) {
+    let mut deck = store.0.lock().unwrap();
+    with_db(&app, |c| db_set_image_favorite(c, id, favorite));
+
+    let active_is_fav = with_db(&app, |c| is_favorites_session(c, deck.active_session));
+    if active_is_fav {
+        // Reload the aggregated favorites so an un-favorited image drops out (and
+        // re-favoriting elsewhere wouldn't apply here, but keeps it consistent).
+        let (images, mode, current, single_pos) =
+            with_db(&app, |c| db_load_session(c, deck.active_session));
+        deck.images = images;
+        deck.mode = mode;
+        deck.current = current;
+        deck.single_pos = single_pos;
+    } else if let Some(i) = find_index(&deck, id) {
+        deck.images[i].favorite = favorite;
+    }
+    render_or_summary(&app, &mut deck);
+    emit_sessions(&app, &deck);
 }
 
 pub fn toggle_click_through_all_internal(app: &AppHandle) {
@@ -1214,6 +1407,7 @@ pub fn create_session(app: AppHandle, store: State<PinStore>, name: String) -> i
     deck.single_pos = None;
     deck.mode = Mode::All;
     deck.active_session = id;
+    deck.favorites_view = false; // create_session always makes a normal session
     render_or_summary(&app, &mut deck);
     emit_sessions(&app, &deck);
     id
@@ -1227,16 +1421,19 @@ pub fn switch_session(app: AppHandle, store: State<PinStore>, id: i64) {
     if deck.active_session == id {
         return;
     }
-    let (images, mode, current, single_pos) = with_db(&app, |c| {
+    let (images, mode, current, single_pos, favorites_view) = with_db(&app, |c| {
         db_set_active(c, id);
         db_touch_session(c, id);
-        db_load_session(c, id)
+        let fav = is_favorites_session(c, id);
+        let (images, mode, current, single_pos) = db_load_session(c, id);
+        (images, mode, current, single_pos, fav)
     });
     deck.images = images;
     deck.mode = mode;
     deck.current = current;
     deck.single_pos = single_pos;
     deck.active_session = id;
+    deck.favorites_view = favorites_view;
     // Respect the global visibility: if pins are hidden, switching loads the new
     // session but keeps it hidden (the hidden state applies across all sessions).
     render_or_summary(&app, &mut deck);
@@ -1276,6 +1473,11 @@ pub fn set_session_starred(app: AppHandle, store: State<PinStore>, id: i64, star
 #[tauri::command]
 pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
     let mut deck = store.0.lock().unwrap();
+    // The Favorites view is permanent — never delete it (deleting it would also
+    // wipe the favorited images, which still belong to their real sessions).
+    if with_db(&app, |c| is_favorites_session(c, id)) {
+        return;
+    }
     let was_active = deck.active_session == id;
     log::warn!("delete_session: deleting session id={id} and its images");
     with_db(&app, |c| {
@@ -1285,16 +1487,18 @@ pub fn delete_session(app: AppHandle, store: State<PinStore>, id: i64) {
         let _ = c.execute("DELETE FROM sessions WHERE id=?1", params![id]);
     });
     if was_active {
-        let (active, images, mode, current, single_pos) = with_db(&app, |c| {
+        let (active, images, mode, current, single_pos, favorites_view) = with_db(&app, |c| {
             let active = db_active_or_init(c);
+            let fav = is_favorites_session(c, active);
             let (images, mode, current, single_pos) = db_load_session(c, active);
-            (active, images, mode, current, single_pos)
+            (active, images, mode, current, single_pos, fav)
         });
         deck.images = images;
         deck.mode = mode;
         deck.current = current;
         deck.single_pos = single_pos;
         deck.active_session = active;
+        deck.favorites_view = favorites_view;
         render_or_summary(&app, &mut deck);
     }
     emit_sessions(&app, &deck);

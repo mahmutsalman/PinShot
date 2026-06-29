@@ -46,6 +46,7 @@ const EMPTY: DeckSummary = {
   sessionId: 0,
   revealed: true,
   poolSize: 12,
+  favoritesView: false,
 };
 
 export default function Control() {
@@ -70,7 +71,12 @@ export default function Control() {
   const QUICK_MAX = 5;
   const quick = mini
     ? [...sessions]
-        .sort((a, b) => Number(b.starred) - Number(a.starred) || b.lastUsed - a.lastUsed)
+        .sort(
+          (a, b) =>
+            Number(b.isFavorites) - Number(a.isFavorites) ||
+            Number(b.starred) - Number(a.starred) ||
+            b.lastUsed - a.lastUsed
+        )
         .slice(0, QUICK_MAX)
     : [];
   const miniChipCount = quick.length;
@@ -138,6 +144,13 @@ export default function Control() {
   // the wrong active session even if the list is momentarily stale.
   const active = sessions.find((s) => s.id === deck.sessionId) ?? sessions.find((s) => s.active);
 
+  // The always-present cross-session Favorites view, and a session list with it
+  // pinned to the top (it's a permanent "collect everything important" view).
+  const favorites = sessions.find((s) => s.isFavorites);
+  const orderedSessions = [...sessions].sort(
+    (a, b) => Number(b.isFavorites) - Number(a.isFavorites) || a.id - b.id
+  );
+
   // Whenever the active session changes, refresh the list so names/counts and
   // the active flag stay in sync with the backend.
   useEffect(() => {
@@ -145,10 +158,17 @@ export default function Control() {
   }, [deck.sessionId]);
 
   async function confirmCloseAll() {
-    const ok = await ask(
-      `Close all ${deck.count} pin${deck.count === 1 ? "" : "s"} in "${active?.name ?? "this session"}"? This removes the images from the session.`,
-      { title: "PinShot", kind: "warning" }
-    );
+    // In the Favorites view this only un-stars everything (originals are kept),
+    // so it's non-destructive — confirm with matching wording.
+    const ok = deck.favoritesView
+      ? await ask(
+          `Remove all ${deck.count} image${deck.count === 1 ? "" : "s"} from Favorites? The originals stay in their own sessions.`,
+          { title: "PinShot", kind: "info" }
+        )
+      : await ask(
+          `Close all ${deck.count} pin${deck.count === 1 ? "" : "s"} in "${active?.name ?? "this session"}"? This removes the images from the session.`,
+          { title: "PinShot", kind: "warning" }
+        );
     if (ok) void closeAllPins();
   }
 
@@ -282,18 +302,27 @@ export default function Control() {
           </button>
         </div>
         <div className="session-list">
-          {sessions.map((s) => (
-            <div key={s.id} className={`session-item${s.active ? " on" : ""}`}>
-              <button
-                className={`ic star${s.starred ? " on" : ""}`}
-                title={s.starred ? "Unpin from quick list" : "Pin to quick list (star)"}
-                onClick={() => void setSessionStarred(s.id, !s.starred)}
-              >
-                {s.starred ? "★" : "☆"}
-              </button>
+          {orderedSessions.map((s) => (
+            <div
+              key={s.id}
+              className={`session-item${s.active ? " on" : ""}${s.isFavorites ? " favorites" : ""}`}
+            >
+              {s.isFavorites ? (
+                <span className="ic star on permastar" title="Favorites — collects starred images from every session">
+                  ★
+                </span>
+              ) : (
+                <button
+                  className={`ic star${s.starred ? " on" : ""}`}
+                  title={s.starred ? "Unpin from quick list" : "Pin to quick list (star)"}
+                  onClick={() => void setSessionStarred(s.id, !s.starred)}
+                >
+                  {s.starred ? "★" : "☆"}
+                </button>
+              )}
               <button
                 className="session-pick"
-                title={`Switch to ${s.name}`}
+                title={s.isFavorites ? "Open Favorites — your starred images across all sessions" : `Switch to ${s.name}`}
                 onClick={() => {
                   void switchSession(s.id);
                   setPane("main");
@@ -302,14 +331,20 @@ export default function Control() {
                 <span className="session-itemname">{s.name}</span>
                 <span className="session-itemcount">{s.count}</span>
               </button>
-              <button
-                className="ic"
-                title="Delete session"
-                disabled={sessions.length <= 1}
-                onClick={() => void confirmDeleteSession(s)}
-              >
-                🗑
-              </button>
+              {s.isFavorites ? (
+                <span className="ic" style={{ visibility: "hidden" }} aria-hidden>
+                  🗑
+                </span>
+              ) : (
+                <button
+                  className="ic"
+                  title="Delete session"
+                  disabled={sessions.length <= 1}
+                  onClick={() => void confirmDeleteSession(s)}
+                >
+                  🗑
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -344,6 +379,15 @@ export default function Control() {
           <span className="session-itemcount">{active?.count ?? 0}</span>
           <span className="caret">▾</span>
         </button>
+        {favorites && (
+          <button
+            className={`ic star${deck.favoritesView ? " on" : ""}`}
+            title={`Favorites — your starred images across all sessions (${favorites.count})`}
+            onClick={() => void switchSession(favorites.id)}
+          >
+            ★
+          </button>
+        )}
         <button
           className="ic"
           title="New session"
@@ -352,18 +396,26 @@ export default function Control() {
           ＋
         </button>
       </div>
-      <input
-        className="session-name"
-        value={name}
-        title="Rename session (Enter to save)"
-        placeholder="Session name"
-        onFocus={() => (editing.current = true)}
-        onChange={(e) => setName(e.target.value)}
-        onBlur={commitName}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        }}
-      />
+      {deck.favoritesView ? (
+        <p className="empty fav-note">
+          ★ <b>Favorites</b> — every image you star, from any session, gathered here for
+          cross-session reference. Star a pin (☆) to add it; ✕ here only removes it from
+          Favorites.
+        </p>
+      ) : (
+        <input
+          className="session-name"
+          value={name}
+          title="Rename session (Enter to save)"
+          placeholder="Session name"
+          onFocus={() => (editing.current = true)}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={commitName}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />
+      )}
 
       {/* The two most-used actions, color-coded and grouped: cyan = Paste,
           violet = visibility. */}
@@ -394,9 +446,16 @@ export default function Control() {
       </div>
 
       {deck.count === 0 ? (
-        <p className="empty">
-          Copy a screenshot (⌃⇧⌘4), then click <b>Paste</b> or press <kbd>⌥⌘V</kbd>.
-        </p>
+        deck.favoritesView ? (
+          <p className="empty">
+            No favorites yet. Open any pin's controls and tap the <b>☆</b> star to collect it
+            here — favorites from every session gather in this view.
+          </p>
+        ) : (
+          <p className="empty">
+            Copy a screenshot (⌃⇧⌘4), then click <b>Paste</b> or press <kbd>⌥⌘V</kbd>.
+          </p>
+        )
       ) : single ? (
         <div className="nav-row">
           <button className="mini" title="Previous (←)" onClick={() => void deckStep(-1)}>
@@ -424,8 +483,16 @@ export default function Control() {
       )}
 
       {deck.count > 0 && (
-        <button className="btn-danger" title="Permanently remove every image in this session" onClick={() => void confirmCloseAll()}>
-          🗑 Close all ({deck.count})
+        <button
+          className={deck.favoritesView ? "ghost" : "btn-danger"}
+          title={
+            deck.favoritesView
+              ? "Remove every image from Favorites (originals are kept)"
+              : "Permanently remove every image in this session"
+          }
+          onClick={() => void confirmCloseAll()}
+        >
+          {deck.favoritesView ? `★ Clear Favorites (${deck.count})` : `🗑 Close all (${deck.count})`}
         </button>
       )}
 

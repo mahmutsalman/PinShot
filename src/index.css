@@ -698,3 +698,36 @@ kbd {
   font-size: 10px;
   background: rgba(18, 20, 26, 0.88);
 }
+
+/* --- Cross-session Favorites ---------------------------------------------- */
+/* Keep a starred (favorited) image's star GOLD even inside the dark toolbar /
+   viewer header (those would otherwise tint .ic.on with the cyan accent). */
+.toolbar .ic.star.on,
+.viewer-head .ic.star.on,
+.chip-bar .ic.star.on {
+  color: #fbbf24;
+  background: transparent;
+  border-color: transparent;
+}
+.ic.star:hover {
+  color: #fde68a;
+}
+/* The permanent ★ marker on the Favorites session row (not a toggle). */
+.ic.star.permastar {
+  cursor: default;
+}
+/* The Favorites row in the sessions pane reads as special + always on top. */
+.session-item.favorites .session-pick {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+.session-item.favorites .session-pick:hover {
+  background: rgba(251, 191, 36, 0.2);
+}
+/* The in-panel Favorites explainer note. */
+.fav-note {
+  padding: 6px 8px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 7px;
+  background: rgba(251, 191, 36, 0.08);
+}

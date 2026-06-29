@@ -17,6 +17,10 @@ export interface PinView {
   index: number; // 1-based position in the deck
   total: number;
   clickThrough: boolean;
+  /** Starred for the cross-session Favorites view. */
+  favorite: boolean;
+  /** This pin belongs to the aggregated Favorites view. */
+  favoritesView: boolean;
 }
 
 export interface DeckSummary {
@@ -29,6 +33,8 @@ export interface DeckSummary {
   revealed: boolean;
   /** How many images "show all" can display at once (window-pool size). */
   poolSize: number;
+  /** The active session is the cross-session Favorites view. */
+  favoritesView: boolean;
 }
 
 export interface SessionInfo {
@@ -40,6 +46,8 @@ export interface SessionInfo {
   lastUsed: number;
   /** Pinned to the mini-bar quick list regardless of recency. */
   starred: boolean;
+  /** The special always-present session aggregating favorited images. */
+  isFavorites: boolean;
 }
 
 /** Run a command, surfacing any error in a native dialog (alerts are no-ops in
@@ -101,5 +109,7 @@ export const setImageCollapsed = (id: number, collapsed: boolean) =>
   quiet("set_image_collapsed", { id, collapsed });
 export const setImageClickThrough = (id: number, ignore: boolean) =>
   quiet("set_image_click_through", { id, ignore });
+export const setImageFavorite = (id: number, favorite: boolean) =>
+  quiet("set_image_favorite", { id, favorite });
 export const resizePin = (label: string, width: number, height: number, center: boolean) =>
   quiet("resize_pin", { label, width, height, center });
